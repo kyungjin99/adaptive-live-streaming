@@ -4,7 +4,7 @@
  * Module dependencies.
  */
 
-const app = require('../app');
+const app = require('../http-server');
 const debug = require('debug')('adaptive-live-streaming:server');
 const http = require('http');
 //const CPUs = require('os').cpus().length;
