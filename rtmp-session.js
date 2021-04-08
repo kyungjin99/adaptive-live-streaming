@@ -25,18 +25,15 @@ const packet = {
           mtid: 0, /* message type id */
           msid: 0, /* message stream id (little endian) */
         },
-        payload: null,
-        // clock: 0,
-        // capacity: null,
-        // bytes: 0,
       },
+      payload: null,
     };
   },
 };
 
 class RTMP_SESSION {
   constructor() {
-    this.chunkSize = 128; // max bytes of data in a chunk (default 128). set by PCM_SET_CHUNK_SIZE
+    this.chunkSize = 128; // max bytes of data in a chunk (default 128)
   }
 
   createChunkBasicHeader(bheader) {
@@ -50,7 +47,7 @@ class RTMP_SESSION {
       buf = Buffer.alloc(2);
       buf[0] = (fmt << 6) | 0;
       buf[1] = (csid - 64) & 0XFF;
-    } else if (csid >= 64 && csid <= 65599) { // chunk basic header 3: 3B
+    } else if (csid >= 64 && csid <= 65599) { // chunk basic header 3
       buf = Buffer.alloc(3);
       buf[0] = (fmt << 6) | 1;
       buf[1] = (csid - 64) & 0xFF;
@@ -70,11 +67,7 @@ class RTMP_SESSION {
     switch (ctype) {
       case CHUNK_TYPE_0: // timestamp: 3B, message length: 3B, message type: 1B message stream: 4B
         buf = Buffer.alloc(11);
-        // message stream id (stored in little endian)
-        buf[10] = msid & 0XFF;
-        buf[9] = (msid << 8) & 0XFF;
-        buf[8] = (msid << 16) & 0XFF;
-        buf[7] = (msid << 24) & 0XFF;
+        buf.writeUInt32LE(msid, 7); // message stream id (stored in little endian)
         break;
       case CHUNK_TYPE_1: // timestamp: 3B, message length: 3B, message type: 1B
         buf = Buffer.alloc(7);
@@ -92,24 +85,16 @@ class RTMP_SESSION {
     // add timestamp field except for type3 chunks
     if (ctype < CHUNK_TYPE_3) {
       if (timestamp >= 0XFFFFFF) { // extended timestamp
-        buf[0] = 0xFF;
-        buf[1] = 0XFF;
-        buf[2] = 0XFF;
+        buf.writeUIntBE(0XFFFFFF, 0, 3);
       } else {
-        buf[0] = timestamp & 0XFF;
-        buf[1] = (timestamp << 8) & 0XFF;
-        buf[2] = (timestamp << 16) & 0XFF;
+        buf.writeUIntBE(timestamp, 0, 3);
       }
     }
 
-    // add message length and message stream id field except for type2, type3 chunks
+    // add message length and message stream id field for type 0, type 1 chunks
     if (ctype < CHUNK_TYPE_2) {
-      // message length
-      buf[3] = mlen & 0XFF;
-      buf[4] = (mlen << 8) & 0XFF;
-      buf[5] = (mlen << 16) & 0XFF;
-      // message type id
-      buf[6] = mtid & 0XFF;
+      buf.writeUIntBE(mlen, 3, 3); // message length
+      buf.writeUInt8(mtid, 6); // message type id
     }
 
     return buf;
@@ -130,15 +115,13 @@ class RTMP_SESSION {
     let payloadOffset = 0; // payload offset
 
     if (extendedTimestampBuf) {
-      extendedTimestampBuf[0] = header.messageHeader.timestamp & 0XFF;
-      extendedTimestampBuf[1] = (header.messageHeader.timestamp << 8) & 0XFF;
-      extendedTimestampBuf[2] = (header.messageHeader.timestamp << 16) & 0XFF;
-      extendedTimestampBuf[3] = (header.messageHeader.timestamp << 24) & 0XFF;
+      extendedTimestampBuf.writeUInt32BE(header.chunkMessageHeader.timestamp);
     }
-    // calculate the size of chunks
+
+    // calculate the number of chunks
     const numOfChunks = Math.floor(header.chunkMessageHeader.plen / this.chunkSize);
     totalBufSize = bheaderSize + mHeaderSize + extendedTimestampBuf.length; // first chunk size
-    if (numOfChunks > 1) { // remainder chunks (they are all type 3)
+    if (numOfChunks > 1) { // remainder chunks (all are type 3)
       totalBufSize += (bheaderSize + useExtendedTimestamp) * (numOfChunks - 1);
     }
     totalBufSize += payloadSize; // add the size of payload
@@ -168,8 +151,8 @@ class RTMP_SESSION {
         // write chunk type 3 header (create only basic header)
         t3bheader.copy(buf, bufOffset, 0, t3bheader.length);
         bufOffset += t3bheader.length;
-        // create message header: none
-        if (useExtendedTimestamp) { // write extended timestamp
+        // write extended timestamp
+        if (useExtendedTimestamp) {
           extendedTimestampBuf.copy(buf, bufOffset, 0, useExtendedTimestamp);
           bufOffset += 4;
         }
