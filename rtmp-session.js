@@ -18,21 +18,20 @@ class RTMP_SESSION {
   }
 
   run() {
-    this.socket.on('data', this.onSocketData);
-    this.socket.on('error', this.onSocketError);
-    this.socket.on('timeout', this.onSocketTimeout);
-    this.socket.on('close', this.onSocketClose);
+    this.socket.on('data', this.onSocketData.bind(this));
+    this.socket.on('error', this.onSocketError.bind(this));
+    this.socket.on('timeout', this.onSocketTimeout.bind(this));
+    this.socket.on('close', this.onSocketClose.bind(this));
   }
 
   onSocketData(data) {
-    const { length } = data.length;
+    const { length } = data;
     let readBytes = 0;
 
     while (readBytes < length) {
       switch (this.handshakeState) {
         // c0 처리
         case HANDSHAKE_UNINIT: {
-          console.log('c0 received');
           readBytes += 1;
           this.handshakeState = HANDSHAKE_INIT;
           break;
@@ -40,10 +39,10 @@ class RTMP_SESSION {
 
         // c1 처리
         case HANDSHAKE_INIT: {
-          console.log('c1 received');
-          data.copy(this.handshakePacket);
+          data.copy(this.handshakePacket, 1, 0, HANDSHAKE_PACKET_SIZE);
           readBytes += HANDSHAKE_PACKET_SIZE;
           const s0s1s2 = Handshake.generateS0S1S2(this.handshakePacket);
+          console.log(s0s1s2);
           this.socket.write(s0s1s2);
           this.handshakeState = HANDSHAKE_VERSION_SENT;
           break;
