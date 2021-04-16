@@ -8,14 +8,12 @@ const HANDSHAKE_DONE = 3;
 
 const HANDSHAKE_PACKET_SIZE = 1536;
 
-
 /* chunk parsing state */
 const PARSE_INIT = 0;
 const PARSE_BHEADER = 1;
 const PARSE_MHEADER = 2;
 const PARSE_EXTENDED_TIMESTAMP = 3;
 const PARSE_PAYLOAD = 4;
-
 
 /* chunk types */
 const CHUNK_TYPE_0 = 0; // timestamp: 3B, message length: 3B, message type: 1B, message stream id: 4B
@@ -49,7 +47,6 @@ const SHARED_OBJECT_MESSAGE_AMF3 = 16;
 const AUDIO_MESSAGE = 8;
 const VIDEO_MESSAGE = 9;
 const AGGREGATE_MESSAGE = 22;
-
 
 const packet = {
   create: (fmt = 0, csid = 0) => {
@@ -264,10 +261,8 @@ class RTMP_SESSION {
           if (totalPayloadSize >= this.parsedPacket.header.chunkMessageHeader.plen) {
             this.parsingState = PARSE_INIT; // finished reading a chunk. restart the parsing cycle
             dataOffset = 0;
-            
-            // create rtmphander instance
-            this.rtmpHandler = new RtmpHandler(this.parsedPacket);
-            this.rtmpHandler.handler();
+
+            this.handler();
 
             // clear parsedPacket
             this.bytesParsed = 0;
@@ -698,7 +693,7 @@ class RTMP_SESSION {
   }
 
   publish() {
-
+    
   }
 }
 
