@@ -14,7 +14,9 @@
     "rules": {
         "no-console": "off",
         "no-use-before-define": ["error", { "functions": false, "classes": true }],
-        "no-shadow": "off",
-        "class-methods-use-this": "off"
+        "class-methods-use-this": "off",
+        "no-bitwise": ["error", { "allow": ["~", "|", ">>", "<<", "&"] }],
+        "no-shadow": ["off"],
+        "linebreak-style": 0
     }
 }
