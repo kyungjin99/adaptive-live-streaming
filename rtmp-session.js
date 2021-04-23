@@ -1,4 +1,5 @@
 const Handshake = require('./rtmp-handshake');
+const AMF = require('node-amfutils');
 
 const HANDSHAKE_UNINIT = 0;
 const HANDSHAKE_INIT = 1;
@@ -20,6 +21,17 @@ const CHUNK_TYPE_1 = 1; // timestamp: 3B, message length: 3B, message type: 1B
 const CHUNK_TYPE_2 = 2; // timestamp: 3B
 const CHUNK_TYPE_3 = 3; // 0B
 
+/* rtmp command message */
+const COMMAND_MESSAGE_AMF0 = 20;
+const COMMAND_MESSAGE_AMF3 = 17;
+const DATA_MESSAGE_AMF0 = 18;
+const DATA_MESSAGE_AMF3 = 15;
+const SHARED_OBJECT_MESSAGE_AMF0 = 19;
+const SHARED_OBJECT_MESSAGE_AMF3 = 16;
+const AUDIO_MESSAGE = 8;
+const VIDEO_MESSAGE = 9;
+const AGGREGATE_MESSAGE = 22;
+
 const packet = {
   create: (fmt = 0, csid = 0) => {
     return {
@@ -39,6 +51,57 @@ const packet = {
     };
   },
 };
+
+const cmdStructure = {
+  onConnectCmd: () => {
+    return {
+      cmd,
+      transId: 1,
+      cmdObj,
+      args: null,
+    };
+  },
+  respondConnectCmd: () => {
+    return {
+      cmd: "_result",
+      transId: 1,
+      cmdObj,
+      info,
+    };
+  },
+  onCallCmd: () => {
+    return {
+      cmd,
+      transId,
+      cmdObj,
+      args: null,
+    };
+  },
+  respondCallCmd: () => {
+    return {
+      cmd: "_result",
+      transId,
+      cmdObj,
+      info,
+    };
+  },
+  onCreateStreamCmd: () => {
+    return {
+      cmd: "createStream",
+      transId,
+      cmdObj,
+    }
+  },
+  respondCreateStreamCmd: () => {
+    return {
+      cmd: "_result",
+      transId,
+      cmdObj,
+      info,
+    };
+  },
+};
+
 class RTMP_SESSION {
   constructor() {
     this.chunkSize = 128; // max bytes of data in a chunk (default 128)
@@ -51,6 +114,15 @@ class RTMP_SESSION {
     this.mheaderSize = 0; // chunk message header size (in bytes)
     this.useExtendedTimestamp = 0;
     this.parsedPacket = packet.create(); // this will multiplex a message
+
+    // net connection commands
+    this.command = cmdStructure;
+    this.onConnectCmd = this.command.onConnectCmd();
+    this.respondConnectCmd = this.command.respondConnectCmd();
+    this.onCallCmd = this.command.onCallCmd();
+    this.respondCallCmd = this.command.respondCallCmd();
+    this.onCreateStreamCmd = this.command.onCreateStreamCmd();
+    this.respondCreateStreamCmd = this.command.respondCreateStreamCmd();
   }
 
   constructor(socket) {
@@ -218,6 +290,7 @@ class RTMP_SESSION {
         }
         case PARSE_PAYLOAD: { // parse payload
           const size = length - dataOffset;
+          // TODO: check payload size and realloc
           data.copy(this.parsedPacket.payload, this.bytesParsed, dataOffset, dataOffset + size);
           this.bytesParsed += size;
           dataOffset += size;
@@ -229,7 +302,8 @@ class RTMP_SESSION {
             // clear parsedPacket
             this.bytesParsed = 0;
             this.parsedPacket = packet.create();
-            this.callHandler();
+            this.handler();
+
           }
           break;
         }
@@ -426,6 +500,158 @@ class RTMP_SESSION {
       }
     }
     return buf;
+  }
+
+  handler() {
+    const { mtid } = this.parsedPacket.header.chunkMessageHeader;
+    const { payload } = this.parsedPacket;
+    switch (mtid) {
+      // protocol control message
+      case PCM_SET_CHUNK_SIZE:
+      case PCM_ABORT_MESSAGE:
+      case PCM_ACKNOWLEDGEMENT:
+      case PCM_WINDOW_ACKNOWLEDGEMENT:
+      case PCM_SET_PEER_BANDWIDTH:
+        this.pcmHandler(mtid, payload);
+        break;
+
+      // user control message
+      case USER_CONTROL_MESSAGE:
+        this.ucmHandler(payload);
+        break;
+
+      // rtmp command messages
+      case COMMAND_MESSAGE_AMF0:
+      case COMMAND_MESSAGE_AMF3:
+      case DATA_MESSAGE_AMF0:
+      case DATA_MESSAGE_AMF3:
+      case SHARED_OBJECT_MESSAGE_AMF0:
+      case SHARED_OBJECT_MESSAGE_AMF3:
+      case AUDIO_MESSAGE:
+      case VIDEO_MESSAGE:
+      case AGGREGATE_MESSAGE:
+        this.rcmHandler(mtid, payload);
+        break;
+
+      default: break;
+    }
+    return null;
+  }
+
+  rcmHandler(mtid, payload) {
+    switch (mtid) {
+      case COMMAND_MESSAGE_AMF0:
+      case COMMAND_MESSAGE_AMF3:
+        this.parseCmdMsg(mtid, payload);
+        break;
+      default: break;
+    }
+  }
+
+  parseCmdMsg(amfType, payload) {
+    const amf = (amfType == COMMAND_MESSAGE_AMF0) ? 0 : 3;
+    // decode payload data according to AMF
+    const decodedMsg = (amf === 0) ? AMF.decodeAmf0Cmd(payload) : AMF.decodeAmf3Cmd(payload);
+    const cmdName = decodedMsg.cmd;
+    const transactionId = decodedMsg.transId;
+    const cmdObj = decodedMsg.cmdObj; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
+
+    switch (cmdName) {
+      case "connect":
+        this.onConnectCmd.cmd = "connect";
+        this.onConnectCmd.cmdObj = cmdObj;
+        this.onConnectCmd.cmdObj.app = cmdObj.app;
+        this.onConnectCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        this.onConnect();
+        break;
+      case "call":
+        this.onCallCmd.cmd = "call";
+        this.onCallCmd.transId = decodedMsg.transId;
+        this.onCallCmd.cmdObj = cmdObj;
+        this.onCallCmd.cmdObj.app = cmdObj.app;
+        this.onCallCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        // TODO: fill
+        this.onCall();
+        break;
+      case "createStream":
+        this.onCreateStreamCmd.cmd = "createStream";
+        this.onCreateStreamCmd.cmdObj = cmdObj;
+        this.onCreateStreamCmd.cmdObj.app = cmdObj.app;
+        this.onCreateStreamCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        this.onCreateStream();
+        break;
+      default:
+        break;
+    }
+  }
+
+  onConnect() {
+    this.sendWindowACK(4294836224); // TODO: fix (2^32-1)
+    this.setPeerBandwidth(4294836224, 2); // TODO: why dynamic limit type?
+    this.respondConnect();
+  }
+
+  respondConnect() {
+    this.respondConnectCmd.cmd = "_result";
+    this.respondConnectCmd.transId = 1;
+    this.respondConnectCmd.cmdObj = {
+      // fmsVer
+      // objectEncoding?
+    };
+    this.respondConnectCmd.info = {
+      level: "status",
+      code: "NetConnection.Connect.Success",
+      description: "Connection succeeded",
+    }
+    // send message to client
+    this.sendCmdMsg("respondConnect");
+  }
+
+  sendCmdMsg(cmdName) { // packetise command msg (response) and then chunk it to send to client
+    let packet = packet.create();
+    packet.header.basicHeader.fmt = CHUNK_TYPE_0;
+    packet.header.basicHeader.csid = 3; // TODO: declare const later (channel invoke)
+    packet.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0; // TODO: why?
+    packet.header.chunkMessageHeader.msid = 0;
+    switch(cmdName) {
+      case "respondConnect":
+        packet.payload = AMF.encodeAmf0Cmd(this.respondConnectCmd);
+        break;
+      case "respondCall":
+        packet.payload = AMF.encodeAmf0Cmd(this.respondCallCmd);
+        break;
+      case "respondCreateStream":
+        packet.payload = AMF.encodeAmf0Cmd(this.respondCreateStreamCmd);
+      default: break;
+    }
+    packet.payload = AMF.encodeAmf0Cmd();
+    packet.header.chunkMessageHeader.plen = packet.payload.length;
+    const chunks = this.createChunks(packet);
+    this.socket.write(chunks);
+  }
+
+  onCall() { // runs RPC at the receiving end
+    // TODO: fill
+    this.respondCall();
+  }
+
+  respondCall() {
+    // TODO: fill
+    this.respondCallCmd.cmd = "_result";
+    this.respondCallCmd.transId = this.onCallCmd.transId;
+    this.respondCallCmd.cmdObj = null;
+    this.sendCmdMsg("respondCall");
+  }
+
+  onCreateStream() {
+    this.respondCreateStream();
+  }
+
+  respondCreateStream() {
+    this.respondCreateStreamCmd.cmd = "_result";
+    this.respondCreateStreamCmd.transId = this.onCreateStreamCmd.transId;
+    this.respondCreateStreamCmd.cmdObj = null,
+    this.sendCmdMsg("respondCreateStream");
   }
 }
 
