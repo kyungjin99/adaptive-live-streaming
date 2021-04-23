@@ -647,7 +647,7 @@ class RTMP_SESSION {
   }
 
   sendWindowACKSize() {
-
+    
   }
 
   sendPeerBandWidth() {
@@ -686,13 +686,23 @@ class RTMP_SESSION {
 
     this.socket.write(this.createChunks(newPacket));
   }
-
-  streamEOF() {
+  
+  // playback할 데이터가 없음을 알려주는 메서드. 필요없을듯?
+  // streamEOF(cid) {
     
-  }
+  // }
 
-  streamDry() {
+  // 특정 청크 스트림에 데이터가 없음을 클라이언트에게 알리는 메서드
+  streamDry(cid) {
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.cid = CSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.payload = Buffer.from([0, UCM_STREAM_DRY, (cid >> 24) & 0xff, (cid >> 16) & 0xff, (cid >> 8) & 0xff, cid & 0xff]);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
 
+    this.socket.write(this.createChunks(newPacket));
   }
   
   // 녹화가 실행되고 있는 cid를 클라이언트에 전송
