@@ -228,7 +228,7 @@ class RTMP_SESSION {
 
     while (dataOffset < length) { // until finishing reading chunk
 
-      this.checkAck(this.bytesParsed); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
+      this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
 
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
@@ -660,7 +660,7 @@ class RTMP_SESSION {
   */
   rtmpWindowACK(wsize) {
     let buff = Buffer.from("02000000000004050000000000000000", "hex");
-    buff.writeUInt32BE(size, 12);
+    buff.writeUInt32BE(wsize, 12);
     this.socket.write(buff);
   }
 
