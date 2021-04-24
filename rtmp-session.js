@@ -1,4 +1,7 @@
 const Handshake = require('./rtmp-handshake');
+const CURRENT_PROGRESS = require("./rtmp_center_ad");
+const GENERATOR = require("./rtmp_center_gen");
+const AMF = require('./rtmp_amf');
 
 /* handshake */
 const HANDSHAKE_UNINIT = 0;
@@ -86,9 +89,11 @@ const packet = {
     };
   },
 };
+
 class RTMP_SESSION {
   constructor(socket) {
     this.socket = socket;
+    this.id = GENERATOR.genSessionID();
     this.handshakeState = HANDSHAKE_UNINIT;
     this.handshakeBytes = 0;
     this.handshakePacket = Buffer.alloc(HANDSHAKE_PACKET_SIZE);
@@ -96,6 +101,17 @@ class RTMP_SESSION {
 
     this.chunkSize = 128; // max bytes of data in a chunk (default 128)
 
+    // ACK를 위한 변수
+    this.ackSize = 0;
+    this.inAck = 0;
+    this.lastAck = 0;
+
+    // NetStream 위한 변수
+    this.appname = "";
+
+    this.gopCacheQueue = null; // ?
+    this.flvGopCacheQueue = null; // ?
+    
     // for parsing chunk
     this.parsingState = 0;
     this.bytesParsed = 0;
@@ -113,6 +129,23 @@ class RTMP_SESSION {
 
     this.startTimestamp = null;
     this.pingRequestTimestamp = null;
+
+
+    //NetStream 관련 변수들 정의
+    this.nowStreamId = 0;
+    this.nowStreamPath= "";
+    this.nowArgs = {};
+
+    this.publishStreamId = 0;
+    this.publishStreamPath = "";
+    this.publishArgs = {};
+
+    this.status = Buffer.from("0000011", "binary"); // range 0 ~ 6
+    // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
+    // 1(is Receiving Audio?, true) 1(is Receiving Video?, true)
+
+    this.players = new Set();
+    CURRENT_PROGRESS.sessions.set(this.id, this);
   }
 
   run() {
@@ -441,6 +474,56 @@ class RTMP_SESSION {
     return buf;
   }
 
+  /* 1. 그동안 읽은 바이트 수 메시지
+        디테일 설명 : ACK
+        클라이언트/서버는 윈도우크기인 바이트 수를 받은 이후에 ACK 메시지를 보내야 한다. 
+        윈도우 크기는 보낸이가 ACK를 받지 못한 상태에서 보내는 최대 바이트 수이다.
+        이것은 시퀀수 수인데 결국 지금까지 받은 바이트 수를 말한다. (최대 4B=2^32-1까지 표현)
+    */
+  sendACK(bytes) {
+    let buff = Buffer.from("02000000000004030000000000000000", "hex");
+    buff.writeUInt32BE(bytes, 12);
+    this.socket.write(buff);
+  }
+  
+  /* 2. 윈도우 크기 메시지
+      클라이언트/서버는 상대가 보내는 데이터 사이즈를 제한하하기 위해 메시지를 보낸다.
+  */
+  rtmpWindowACK(wsize) {
+      let buff = Buffer.from("02000000000004050000000000000000", "hex");
+      buff.writeUInt32BE(size, 12);
+      this.socket.write(buff);
+  }
+
+  /* 3. 대역폭 조절 메시지
+  대역폭제한 메시지를 받은 상대는 메시지 정보에 맞춰 대역폭을 줄인다.
+  또한 윈도우 창크기를 조절했다는 ACK 사이즈 메시지(4B) + Limit type(1B)를 보내줘야한다.
+  (윈도우 창크기가 대역폭 조절 사이즈와 다른경우)
+  */
+  rtmpBandWidth(limit, type) {
+      let buff = Buffer.from("0200000000000506000000000000000000", "hex");
+      buff.writeUInt32BE(limit, 12);
+      buff[16] = type;
+      this.socket.write(buff);
+  }
+
+
+  rtmpSendAck(data) {
+      this.inAck += data.length;
+
+      if(this.inAck >= 0xf0000000) { //왜 비트정렬이 1111 0000 0000 0000 ---인지 
+          this.inAck = 0;
+          this.lastAck = 0;
+      }
+
+      // 정상적인 ACK 메시지 = 지금까지 받은 바이트 수를 보낸 경우
+      if(this.ackSize > 0 && this.inAck - this.lastAck >= this.ackSize) {
+          this.lastAck = this.inAck;
+          this.sendACK(this.inAck)
+      }
+  }
+
+
   createChunks(packet) { // create chunks from a packet and interleave them in a buffer
     // calculate the size of header and payload
     let totalBufSize = 0; // to allocate buffer
@@ -509,7 +592,7 @@ class RTMP_SESSION {
     return buf;
   }
 
-
+  
   /*
     Handler
   */
@@ -745,50 +828,105 @@ class RTMP_SESSION {
   }
 
 
-
-
-  // RTMP COMMAND MESSAGES
-  rcmHandler(mtid, payload) {
-    return null;
-  }
-
-  netConnection() {
-
-  }
-
-  netStream() {
-
-  }
-
-  
-  // netConnection에서 사용되는 메서드
-  connect() {
-
-  }
-
-  call() {
     
+  //NetStream
+  /*
+  명령어를 사용하는 때 : 클라이언트가 스트림을 새로 만들고자 할 때
+  이름을 통해, 어떤 클라이언트든 해당 스트림에서 재생하고 오디오-비디오-데이터메시지를 받을 수 있다.
+  구조 : Command Name(publish-String) + Transaction ID(0) + Command Object(null)
+  + Publishing Name(string) 
+  + Publishing Type(String) : 
+  live(파일에 데이터를 기록하지 않고(recording) 라이브 데이터가 시작될 때) 
+  record(스트림이 생성되고 데이터가 새로운 파일로 써질 떄. 이 파일은 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
+  혹시나 파일이 이미 존재하는 경우에는, 덮어씌운다.) 
+  append(스트림이 생성되고 데이터가 파일에 덧붙여질 떄. 붙여질 파일이 존재하지 않으면 새로 생성한다)
+  *서버는 publish 시작을 마킹하기 위해 onStatus 명령어로 응답한다.
+*/
+  publish(msg) {
+    if(typeof msg.st_name !== "String") return;
+
+    //서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
+    this.publishStreamPath = "/" + this.appname + "/" + msg.st_name.split("?")[0];
+    this.publishStreamId = this.parsedPacket.chunkMessageHeader.ms_id;
+
+    if(this.status[0] == 0) return;
+
+    //if(this.)
   }
 
-  createStream() {
-
+  receiveAudio(msg) {
+    this.status[5] = msg.bool;
   }
 
-  // netStream에서 사용되는 메서드
-  deleteStream() {
-
+  receiveVideo(msg) {
+    this.status[6] = msg.bool;
   }
 
-  receiveAudio() {
+  deleteStream(msg) { 
+    // 0(is Start?, false : 0) 0(is Publishing?, false : 1) 0(is Playing?, false : 2) 0(is Idling?, false : 3) 0(is Pausing?, false : 4)
+    // 1(is Receiving Audio?, true : 5) 1(is Receiving Video?, true : 6)
+    if(msg.st_id == this.nowStreamId) {
+        if(this.status[3]) {
+            CURRENT_PROGRESS.idlePlayers.delete(this.id);
+            this.status[3] = 0; // set false
+        }
+        else { // 스트림 생성자인 경우
+            let publisher_id = CURRENT_PROGRESS.publishers.get(this.nowStreamPath);
+            if(publisher_id != null) {
+                CURRENT_PROGRESS.sessions.get(publisher_id).players.delete(this.id);
+            }
+            this.status[2] = 0; // playing stop, set false
+        }
 
-  }
+        if(this.status[0]) {
+            this.sendStatus() // "NetStream.Play.Stop" 상태메시지 보내기 - 흠 스펙에서는 안보낸다구 하던뎅
+        }
+        
+        this.nowStreamId = 0;
+        this.nowStreamPath = "";
+    }
 
-  receiveVideo() {
+    if(msg.st_id == this.publishStreamId) {
+        if(this.status[1]) {
+            if(this.status[0]) {
+                this.sendStatus() // "NetStream.Unpublish.Success" 상태메시지 보내기
+            }
 
-  }
+            for(let participantId of this.players) {
+                let session = CURRENT_PROGRESS.sessions.get(participantId);
 
-  publish() {
-    
+                if(session instanceof RTMPSession) {
+                    session.sendStatus() // "NetStream.Play.UnpublishNotify" 상태메시지
+                    session.flush();
+                }
+                else {
+                    session.stop();
+                }
+            }
+
+            // RTMPSession 클래스 타입이 아닌 세션 정리한 후
+            for(let real_participantId of this.players) {
+                let real_session = CURRENT_PROGRESS.sessions.get(real_participantId);
+                CURRENT_PROGRESS.idlePlayers.add(real_participantId);
+                real_session.status[2] = 0; // not playing
+                real_session.status[3] = 1; // true idling    
+            }
+
+            CURRENT_PROGRESS.publishers.delete(this.nowStreamPath);
+            if(this.gopCacheQueue) {
+                this.gopCacheQueue.clear();
+            }
+            if(this.flvGopCacheQueue) {
+                this.flvGopCacheQueue.clear();
+            }
+
+            this.players.clear();
+            this.status[1] = 0; // not publishing
+        }
+
+        this.nowStreamId = 0;
+        this.nowStreamPath = "";
+    }
   }
 }
 
