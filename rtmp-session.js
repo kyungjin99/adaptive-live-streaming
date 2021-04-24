@@ -1,10 +1,13 @@
 const Handshake = require('./rtmp-handshake');
+const CURRENT_PROGRESS = require("./rtmp_center_ad");
+const GENERATOR = require("./rtmp_center_gen");
+const AMF = require('./rtmp_amf');
 
+/* handshake */
 const HANDSHAKE_UNINIT = 0;
 const HANDSHAKE_INIT = 1;
 const HANDSHAKE_ACK_SENT = 2;
 const HANDSHAKE_DONE = 3;
-
 const HANDSHAKE_PACKET_SIZE = 1536;
 
 /* chunk parsing state */
@@ -21,10 +24,51 @@ const CHUNK_TYPE_2 = 2; // timestamp: 3B
 const CHUNK_TYPE_3 = 3; // 0B
 
 
-//NetStream 포맷
-const CURRENT_PROGRESS = require("./rtmp_center_ad");
-const GENERATOR = require("./rtmp_center_gen");
-const AMF = require('./rtmp_amf');
+/* 
+  message header - type ids
+*/
+/* protocol control message types */
+const PCM_SET_CHUNK_SIZE = 1;
+const PCM_ABORT_MESSAGE = 2;
+const PCM_ACKNOWLEDGEMENT = 3;
+const PCM_WINDOW_ACKNOWLEDGEMENT = 5;
+const PCM_SET_PEER_BANDWIDTH = 6;
+
+/* user control message */
+const USER_CONTROL_MESSAGE = 4;
+
+/* rtmp command message */
+const COMMAND_MESSAGE_AMF0 = 20;
+const COMMAND_MESSAGE_AMF3 = 17;
+const DATA_MESSAGE_AMF0 = 18;
+const DATA_MESSAGE_AMF3 = 15;
+const SHARED_OBJECT_MESSAGE_AMF0 = 19;
+const SHARED_OBJECT_MESSAGE_AMF3 = 16;
+const AUDIO_MESSAGE = 8;
+const VIDEO_MESSAGE = 9;
+const AGGREGATE_MESSAGE = 22;
+
+
+/* user control message types */
+const UCM_STREAM_BEGIN = 0;
+const UCM_STREAM_EOF = 1;
+const UCM_STREAM_DRY = 2;
+const UCM_SET_BUFFER_LENGTH = 3;
+const UCM_STREAM_IS_RECORDED = 4;
+const UCM_PING_REQUEST = 5;
+const UCM_PING_RESPONSE = 6;
+
+/* peer bandwidth limit types */
+const LIMIT_TYPE_HARD = 0;
+const LIMIT_TYPE_SOFT = 1;
+const LIMIT_TYPE_DYNAMIC = 2;
+
+
+/* reserved chunk stream id */
+const CSID_PROTOCOL_MESSAGE = 2;
+
+/* reserved message stream id */
+const MSID_PROTOCOL_MESSAGE = 0;
 
 const packet = {
   create: (fmt = 0, csid = 0) => {
@@ -47,7 +91,14 @@ const packet = {
 };
 
 class RTMP_SESSION {
-  constructor() {
+  constructor(socket) {
+    this.socket = socket;
+    this.id = GENERATOR.genSessionID();
+    this.handshakeState = HANDSHAKE_UNINIT;
+    this.handshakeBytes = 0;
+    this.handshakePacket = Buffer.alloc(HANDSHAKE_PACKET_SIZE);
+    this.startTimestamp = Date.now();
+
     this.chunkSize = 128; // max bytes of data in a chunk (default 128)
 
     // ACK를 위한 변수
@@ -69,6 +120,15 @@ class RTMP_SESSION {
     this.mheaderSize = 0; // chunk message header size (in bytes)
     this.useExtendedTimestamp = 0;
     this.parsedPacket = packet.create(); // this will multiplex a message
+    this.packetList = new Map();
+    
+    this.currentAck = 0;
+    this.lastAck = 0;
+    this.ackSize = 0;
+    this.limitType = LIMIT_TYPE_HARD;
+
+    this.startTimestamp = null;
+    this.pingRequestTimestamp = null;
 
 
     //NetStream 관련 변수들 정의
@@ -88,20 +148,16 @@ class RTMP_SESSION {
     CURRENT_PROGRESS.sessions.set(this.id, this);
   }
 
-  constructor(socket) {
-    this.socket = socket;
-    this.id = GENERATOR.genSessionID();
-
-    this.handshakeState = HANDSHAKE_UNINIT;
-    this.handshakeBytes = 0;
-    this.handshakePacket = Buffer.alloc(HANDSHAKE_PACKET_SIZE);
-  }
-
   run() {
     this.socket.on('data', this.onSocketData.bind(this));
     this.socket.on('error', this.onSocketError.bind(this));
     this.socket.on('timeout', this.onSocketTimeout.bind(this));
     this.socket.on('close', this.onSocketClose.bind(this));
+  }
+
+  stop() {
+    // TODO: 종료 시 추가적인 처리가 필요한가?
+    this.socket.close();
   }
 
   onSocketData(data) {
@@ -160,18 +216,21 @@ class RTMP_SESSION {
   }
 
   onSocketError(error) {
-    console.error(error);
+    console.error('[ERROR] arbitrary error occured');
+    this.stop();
   }
 
   onSocketTimeout() {
-    this.socket.close();
+    console.error('[ERROR] timeout');
+    this.stop();
   }
 
   onSocketClose() {
-    this.socket.close();
+    this.stop();
   }
 
   readChunks(data, readBytes, length) {
+    // TODO: dataOffset = readBytes가 되어야 하지 않나..?
     let dataOffset = 0; // current offset of a chunk data received
 
     while (dataOffset < length) { // until finishing reading chunk
@@ -263,15 +322,33 @@ class RTMP_SESSION {
           if (totalPayloadSize >= this.parsedPacket.header.chunkMessageHeader.plen) {
             this.parsingState = PARSE_INIT; // finished reading a chunk. restart the parsing cycle
             dataOffset = 0;
+
+            this.handler();
+
             // clear parsedPacket
             this.bytesParsed = 0;
             this.parsedPacket = packet.create();
-            this.callHandler();
           }
           break;
         }
         default: break;
       }
+    }
+
+    /* 
+      TODO: 
+      읽은 데이터 수 기록해놔야함.
+      그래야 후에 pcm의 sendAck에서 활용 가능.
+      일단 변수명 currentAck, lastAck로 설정해둠.
+    */
+    this.currentAck += length;
+    if(this.currentAck >= 0xf00000000) {
+      this.currentAck = 0;
+      this.lastAck = 0;
+    }
+    if(this.currentAck - this.lastAck >= this.ackSize) {
+      this.lastAck = this.currentAck;
+      this.sendACK(this.currentAck);
     }
   }
 
@@ -515,6 +592,243 @@ class RTMP_SESSION {
     return buf;
   }
 
+  
+  /*
+    Handler
+  */
+  handler() {
+    const { mtid } = this.parsedPacket.header.chunkMessageHeader.mtid;
+    const { payload } = this.parsedPacket;
+    switch (mtid) {
+      // protocol control message
+      case PCM_SET_CHUNK_SIZE:
+      case PCM_ABORT_MESSAGE:
+      case PCM_ACKNOWLEDGEMENT:
+      case PCM_WINDOW_ACKNOWLEDGEMENT:
+      case PCM_SET_PEER_BANDWIDTH:
+        this.pcmHandler(mtid, payload);
+        break;
+
+      // user control message
+      case USER_CONTROL_MESSAGE:
+        this.ucmHandler(payload);
+        break;
+
+      // rtmp command messages
+      case COMMAND_MESSAGE_AMF0:
+      case COMMAND_MESSAGE_AMF3:
+      case DATA_MESSAGE_AMF0:
+      case DATA_MESSAGE_AMF3:
+      case SHARED_OBJECT_MESSAGE_AMF0:
+      case SHARED_OBJECT_MESSAGE_AMF3:
+      case AUDIO_MESSAGE:
+      case VIDEO_MESSAGE:
+      case AGGREGATE_MESSAGE:
+        this.rcmHandler(mtid, payload);
+        break;
+        
+      default: break;
+    }
+    return null;
+  }
+
+  pcmHandler(mtid, payload) {
+    switch (mtid) {
+      case PCM_SET_CHUNK_SIZE: {
+        this.setChunkSize(payload);
+        break;
+      }
+      case PCM_ABORT_MESSAGE: {
+        this.abortMessage(payload);
+        break;
+      }
+      case PCM_ACKNOWLEDGEMENT: {
+        // this.receiveACK(payload);
+        break;
+      }
+      case PCM_WINDOW_ACKNOWLEDGEMENT: {
+        this.setWindowACKSize(payload);
+        break;
+      }
+      case PCM_SET_PEER_BANDWIDTH: {
+        // extract windowSize(4B) and limitType(1B) from payload
+        const windowSize = this.parsedPacket.payload.readUInt32BE(0, 4);
+        const limitType = this.parsedPacket.payload.readUInt8(4);
+        this.setPeerBandwidth(windowSize, limitType);
+        break;
+      }
+      default:
+        break;
+    }
+    return null;
+  }
+
+  /* 
+    PCM 수신 시 사용되는 메서드들 
+  */ 
+  setChunkSize(payload) {
+    const chunkSize = payload.readUInt32BE(); 
+    this.chunkSize = chunkSize;
+  }
+
+  abortMessage(payload) {
+    const csid = payload.readUInt32BE();
+    this.packetList.delete(csid);
+  }
+
+  
+  /*
+    상대방에게 데이터를 전송할 때 필요한 메서드..
+  */
+
+  // receiveACK(payload) {
+  //   const ack = payload.readUInt32BE();
+  //   if(ack !== this.outWindowSize) {
+      
+  //   }
+  // }
+
+  setWindowACKSize(payload) {
+    const ackSize = payload.readUInt32BE();
+    this.ackSize = ackSize;
+  }
+
+  setPeerBandwidth(windowSize, limitType) {
+    switch(limitType) {
+      case LIMIT_TYPE_HARD: {
+        this.ackSize = windowSize;
+        this.limitType = limitType;
+        break;
+      }
+      case LIMIT_TYPE_SOFT: {
+        if(this.ackSize > windowSize) {
+          this.ackSize = windowSize;
+          this.limitType = limitType;
+          break;
+        }
+      }
+      case LIMIT_TYPE_DYNAMIC: {
+        if(this.limitType === LIMIT_TYPE_HARD) {
+          this.ackSize = windowSize;
+          this.limitType = limitType;
+          break;
+        }
+      }
+      default: {
+
+      }
+    } 
+  }
+
+  
+  /*
+    PCM 전송 시 사용되는 메서드들
+  */
+  sendACK(payload) {
+    return sequenceNumber; // test
+    // write to socket
+  }
+
+  sendWindowACKSize() {
+    
+  }
+
+  sendPeerBandWidth() {
+    
+  }
+
+  
+
+  // USER CONTROL MESSAGES
+  ucmHandler(payload) {
+    const ucmType = payload.readUInt16BE();
+    switch(ucmType) {
+      case UCM_SET_BUFFER_LENGTH: {
+        this.setBufferLength(payload);
+        break;
+      }
+      case UCM_PING_RESPONSE: {
+        this.pingResponse(payload);
+        break;
+      }
+      default: {
+
+      }
+    }
+  }
+
+  // 서버가 클라이언트로 전송하는 UCM 메서드
+  streamBegin(cid) {
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.cid = CSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.payload = Buffer.from([0, UCM_PING_RESPONSE, (cid >> 24) & 0xff, (cid >> 16) & 0xff, (cid >> 8) & 0xff, cid & 0xff]);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+
+    this.socket.write(this.createChunks(newPacket));
+  }
+  
+  // playback할 데이터가 없음을 알려주는 메서드. 필요없을듯?
+  // streamEOF(cid) {
+    
+  // }
+
+  // 특정 청크 스트림에 데이터가 없음을 클라이언트에게 알리는 메서드
+  streamDry(cid) {
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.cid = CSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.payload = Buffer.from([0, UCM_STREAM_DRY, (cid >> 24) & 0xff, (cid >> 16) & 0xff, (cid >> 8) & 0xff, cid & 0xff]);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+
+    this.socket.write(this.createChunks(newPacket));
+  }
+  
+  // 녹화가 실행되고 있는 cid를 클라이언트에 전송
+  streamIsRecorded(cid) {
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.cid = CSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.payload = Buffer.from([0, UCM_STREAM_IS_RECORDED, (cid >> 24) & 0xff, (cid >> 16) & 0xff, (cid >> 8) & 0xff, cid & 0xff]);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+
+    this.socket.write(this.createChunks(newPacket));
+  }
+
+  pingRequest() {
+    const newPacket = newPacket.create();
+    const timestampDelta = Date.now() - this.startTimestamp;
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.cid = CSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.payload = Buffer.from([0, UCM_PING_REQUEST, (timestampDelta >> 24) & 0xff, (timestampDelta >> 16) & 0xff, (timestampDelta >> 8) & 0xff, timestampDelta & 0xff]);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+
+    this.socket.write(this.createChunks(newPacket));
+  }
+
+  // 클라이언트로부터 수신한 UCM 처리 메서드
+  setBufferLength(payload) {
+    // 정확히 뭘 세팅하는건지 이해가 안됨.
+  }
+
+  pingResponse(payload) {
+    const timestamp = payload.readUInt32BE();
+    if(this.pingRequestTimestamp !== timestamp)
+      this.stop();
+    else
+      this.pingRequestTimestamp = null;
+  }
+
+
+    
   //NetStream
   /*
   명령어를 사용하는 때 : 클라이언트가 스트림을 새로 만들고자 할 때
