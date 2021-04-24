@@ -558,7 +558,7 @@ class RTMP_SESSION {
       case PCM_ABORT_MESSAGE: {
         this.abortMessage(payload);
         break;
-      }   
+      }
       case PCM_ACKNOWLEDGEMENT: {
         // this.receiveACK(payload);
         break;
@@ -789,12 +789,6 @@ class RTMP_SESSION {
 
   publish() {
     
-  }
-
-
-  // pcm, ucm, rcm 패킷 전송하는 메서드
-  sendProcessMessage() {
-
   }
 }
 
