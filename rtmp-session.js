@@ -851,7 +851,7 @@ class RTMP_SESSION {
   */
   rtmpWindowACK(wsize) {
     let buff = Buffer.from("02000000000004050000000000000000", "hex");
-    buff.writeUInt32BE(size, 12);
+    buff.writeUInt32BE(wsize, 12);
     this.socket.write(buff);
   }
   /* 3. 대역폭 조절 메시지
@@ -1111,7 +1111,7 @@ class RTMP_SESSION {
     packet.payload.length = packet.payload.length; // (!)header.length
     packet.header.timestamp = this.parsePacket.clock;
 
-    let rtmpChunks = this.rtmpChunksCreate(packet);
+    let rtmpChunks = this.createChunks(packet);
 
     // (!)player session buffer cork()
 
@@ -1152,7 +1152,7 @@ class RTMP_SESSION {
     packet.payload = payload;
     packet.header.length = packet.payload.length;
     packet.header.timestamp = this.parserPacket.clock;
-    let rtmpChunks = this.rtmpChunksCreate(packet);
+    let rtmpChunks = this.createChunks(packet);
     let flvTag = NodeFlvSession.createFlvTag(packet);
 
     // (!)session? address?
@@ -1184,7 +1184,7 @@ class RTMP_SESSION {
         packet.header.type = RTMP_TYPE_DATA;
         packet.payload = this.metaData;
         packet.header.length = packet.payload.length;
-        let rtmpChunks = this.rtmpChunksCreate(packet);
+        let rtmpChunks = this.createChunks(packet);
     }
   }
 }
