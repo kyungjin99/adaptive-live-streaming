@@ -27,17 +27,13 @@ const CHUNK_TYPE_3 = 3; // 0B
 /* 
   message header - type ids
 */
-/* protocol control message types */
-const PCM_SET_CHUNK_SIZE = 1;
-const PCM_ABORT_MESSAGE = 2;
-const PCM_ACKNOWLEDGEMENT = 3;
-const PCM_WINDOW_ACKNOWLEDGEMENT = 5;
-const PCM_SET_PEER_BANDWIDTH = 6;
-
-/* user control message */
+const SET_CHUNK_SIZE = 1;
+const ABORT_MESSAGE = 2;
+const ACKNOWLEDGEMENT = 3;
 const USER_CONTROL_MESSAGE = 4;
+const WINDOW_ACKNOWLEDGEMENT = 5;
+const SET_PEER_BANDWIDTH = 6;
 
-/* rtmp command message */
 const COMMAND_MESSAGE_AMF0 = 20;
 const COMMAND_MESSAGE_AMF3 = 17;
 const DATA_MESSAGE_AMF0 = 18;
@@ -49,7 +45,7 @@ const VIDEO_MESSAGE = 9;
 const AGGREGATE_MESSAGE = 22;
 
 
-/* user control message types */
+/* user control message - event types */
 const UCM_STREAM_BEGIN = 0;
 const UCM_STREAM_EOF = 1;
 const UCM_STREAM_DRY = 2;
@@ -62,7 +58,6 @@ const UCM_PING_RESPONSE = 6;
 const LIMIT_TYPE_HARD = 0;
 const LIMIT_TYPE_SOFT = 1;
 const LIMIT_TYPE_DYNAMIC = 2;
-
 
 /* reserved chunk stream id */
 const CSID_PROTOCOL_MESSAGE = 2;
@@ -107,10 +102,11 @@ class RTMP_SESSION {
     this.lastAck = 0;
 
     // NetStream 위한 변수
+    // TODO: 필요없을거같은데..? 확인 필요 
     this.appname = "";
 
-    this.gopCacheQueue = null; // ?
-    this.flvGopCacheQueue = null; // ?
+    // this.gopCacheQueue = null;
+    // this.flvGopCacheQueue = null;
     
     // for parsing chunk
     this.parsingState = 0;
@@ -121,15 +117,11 @@ class RTMP_SESSION {
     this.useExtendedTimestamp = 0;
     this.parsedPacket = packet.create(); // this will multiplex a message
     this.packetList = new Map();
-    
-    this.currentAck = 0;
-    this.lastAck = 0;
-    this.ackSize = 0;
+
     this.limitType = LIMIT_TYPE_HARD;
 
     this.startTimestamp = null;
     this.pingRequestTimestamp = null;
-
 
     //NetStream 관련 변수들 정의
     this.nowStreamId = 0;
@@ -144,6 +136,8 @@ class RTMP_SESSION {
     // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
     // 1(is Receiving Audio?, true) 1(is Receiving Video?, true)
 
+
+    // TODO: flv에 쓰이는 변수들..? 확인 필요
     this.players = new Set();
     CURRENT_PROGRESS.sessions.set(this.id, this);
   }
@@ -230,10 +224,12 @@ class RTMP_SESSION {
   }
 
   readChunks(data, readBytes, length) {
-    // TODO: dataOffset = readBytes가 되어야 하지 않나..?
-    let dataOffset = 0; // current offset of a chunk data received
+    let dataOffset = readBytes; // current offset of a chunk data received
 
     while (dataOffset < length) { // until finishing reading chunk
+
+      this.checkAck(this.bytesParsed); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
+
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
           this.parsedChunkBuf[0] = data[readBytes + dataOffset]; // read 1 byte from data and write to buf
@@ -333,22 +329,6 @@ class RTMP_SESSION {
         }
         default: break;
       }
-    }
-
-    /* 
-      TODO: 
-      읽은 데이터 수 기록해놔야함.
-      그래야 후에 pcm의 sendAck에서 활용 가능.
-      일단 변수명 currentAck, lastAck로 설정해둠.
-    */
-    this.currentAck += length;
-    if(this.currentAck >= 0xf00000000) {
-      this.currentAck = 0;
-      this.lastAck = 0;
-    }
-    if(this.currentAck - this.lastAck >= this.ackSize) {
-      this.lastAck = this.currentAck;
-      this.sendACK(this.currentAck);
     }
   }
 
@@ -474,55 +454,6 @@ class RTMP_SESSION {
     return buf;
   }
 
-  /* 1. 그동안 읽은 바이트 수 메시지
-        디테일 설명 : ACK
-        클라이언트/서버는 윈도우크기인 바이트 수를 받은 이후에 ACK 메시지를 보내야 한다. 
-        윈도우 크기는 보낸이가 ACK를 받지 못한 상태에서 보내는 최대 바이트 수이다.
-        이것은 시퀀수 수인데 결국 지금까지 받은 바이트 수를 말한다. (최대 4B=2^32-1까지 표현)
-    */
-  sendACK(bytes) {
-    let buff = Buffer.from("02000000000004030000000000000000", "hex");
-    buff.writeUInt32BE(bytes, 12);
-    this.socket.write(buff);
-  }
-  
-  /* 2. 윈도우 크기 메시지
-      클라이언트/서버는 상대가 보내는 데이터 사이즈를 제한하하기 위해 메시지를 보낸다.
-  */
-  rtmpWindowACK(wsize) {
-      let buff = Buffer.from("02000000000004050000000000000000", "hex");
-      buff.writeUInt32BE(size, 12);
-      this.socket.write(buff);
-  }
-
-  /* 3. 대역폭 조절 메시지
-  대역폭제한 메시지를 받은 상대는 메시지 정보에 맞춰 대역폭을 줄인다.
-  또한 윈도우 창크기를 조절했다는 ACK 사이즈 메시지(4B) + Limit type(1B)를 보내줘야한다.
-  (윈도우 창크기가 대역폭 조절 사이즈와 다른경우)
-  */
-  rtmpBandWidth(limit, type) {
-      let buff = Buffer.from("0200000000000506000000000000000000", "hex");
-      buff.writeUInt32BE(limit, 12);
-      buff[16] = type;
-      this.socket.write(buff);
-  }
-
-
-  rtmpSendAck(data) {
-      this.inAck += data.length;
-
-      if(this.inAck >= 0xf0000000) { //왜 비트정렬이 1111 0000 0000 0000 ---인지 
-          this.inAck = 0;
-          this.lastAck = 0;
-      }
-
-      // 정상적인 ACK 메시지 = 지금까지 받은 바이트 수를 보낸 경우
-      if(this.ackSize > 0 && this.inAck - this.lastAck >= this.ackSize) {
-          this.lastAck = this.inAck;
-          this.sendACK(this.inAck)
-      }
-  }
-
 
   createChunks(packet) { // create chunks from a packet and interleave them in a buffer
     // calculate the size of header and payload
@@ -592,7 +523,7 @@ class RTMP_SESSION {
     return buf;
   }
 
-  
+
   /*
     Handler
   */
@@ -601,11 +532,11 @@ class RTMP_SESSION {
     const { payload } = this.parsedPacket;
     switch (mtid) {
       // protocol control message
-      case PCM_SET_CHUNK_SIZE:
-      case PCM_ABORT_MESSAGE:
-      case PCM_ACKNOWLEDGEMENT:
-      case PCM_WINDOW_ACKNOWLEDGEMENT:
-      case PCM_SET_PEER_BANDWIDTH:
+      case SET_CHUNK_SIZE:
+      case ABORT_MESSAGE:
+      case ACKNOWLEDGEMENT:
+      case WINDOW_ACKNOWLEDGEMENT:
+      case SET_PEER_BANDWIDTH:
         this.pcmHandler(mtid, payload);
         break;
 
@@ -634,23 +565,23 @@ class RTMP_SESSION {
 
   pcmHandler(mtid, payload) {
     switch (mtid) {
-      case PCM_SET_CHUNK_SIZE: {
+      case SET_CHUNK_SIZE: {
         this.setChunkSize(payload);
         break;
       }
-      case PCM_ABORT_MESSAGE: {
+      case ABORT_MESSAGE: {
         this.abortMessage(payload);
         break;
       }
-      case PCM_ACKNOWLEDGEMENT: {
+      case ACKNOWLEDGEMENT: {
         // this.receiveACK(payload);
         break;
       }
-      case PCM_WINDOW_ACKNOWLEDGEMENT: {
+      case WINDOW_ACKNOWLEDGEMENT: {
         this.setWindowACKSize(payload);
         break;
       }
-      case PCM_SET_PEER_BANDWIDTH: {
+      case SET_PEER_BANDWIDTH: {
         // extract windowSize(4B) and limitType(1B) from payload
         const windowSize = this.parsedPacket.payload.readUInt32BE(0, 4);
         const limitType = this.parsedPacket.payload.readUInt8(4);
@@ -675,18 +606,6 @@ class RTMP_SESSION {
     const csid = payload.readUInt32BE();
     this.packetList.delete(csid);
   }
-
-  
-  /*
-    상대방에게 데이터를 전송할 때 필요한 메서드..
-  */
-
-  // receiveACK(payload) {
-  //   const ack = payload.readUInt32BE();
-  //   if(ack !== this.outWindowSize) {
-      
-  //   }
-  // }
 
   setWindowACKSize(payload) {
     const ackSize = payload.readUInt32BE();
@@ -724,17 +643,53 @@ class RTMP_SESSION {
   /*
     PCM 전송 시 사용되는 메서드들
   */
-  sendACK(payload) {
-    return sequenceNumber; // test
-    // write to socket
+  /* 1. 그동안 읽은 바이트 수 메시지
+        디테일 설명 : ACK
+        클라이언트/서버는 윈도우크기인 바이트 수를 받은 이후에 ACK 메시지를 보내야 한다. 
+        윈도우 크기는 보낸이가 ACK를 받지 못한 상태에서 보내는 최대 바이트 수이다.
+        이것은 시퀀수 수인데 결국 지금까지 받은 바이트 수를 말한다. (최대 4B=2^32-1까지 표현)
+    */
+  sendACK(bytes) {
+    let buff = Buffer.from("02000000000004030000000000000000", "hex");
+    buff.writeUInt32BE(bytes, 12);
+    this.socket.write(buff);
+  }
+  
+  /* 2. 윈도우 크기 메시지
+      클라이언트/서버는 상대가 보내는 데이터 사이즈를 제한하하기 위해 메시지를 보낸다.
+  */
+  rtmpWindowACK(wsize) {
+    let buff = Buffer.from("02000000000004050000000000000000", "hex");
+    buff.writeUInt32BE(size, 12);
+    this.socket.write(buff);
   }
 
-  sendWindowACKSize() {
-    
+  /* 3. 대역폭 조절 메시지
+  대역폭제한 메시지를 받은 상대는 메시지 정보에 맞춰 대역폭을 줄인다.
+  또한 윈도우 창크기를 조절했다는 ACK 사이즈 메시지(4B) + Limit type(1B)를 보내줘야한다.
+  (윈도우 창크기가 대역폭 조절 사이즈와 다른경우)
+  */
+  rtmpBandWidth(limit, type) {
+    let buff = Buffer.from("0200000000000506000000000000000000", "hex");
+    buff.writeUInt32BE(limit, 12);
+    buff[16] = type;
+    this.socket.write(buff);
   }
 
-  sendPeerBandWidth() {
-    
+
+  checkAck(data) {
+    this.inAck += data.length;
+
+    if(this.inAck >= 0xf0000000) { //왜 비트정렬이 1111 0000 0000 0000 ---인지 
+        this.inAck = 0;
+        this.lastAck = 0;
+    }
+
+    // 정상적인 ACK 메시지 = 지금까지 받은 바이트 수를 보낸 경우
+    if(this.ackSize > 0 && this.inAck - this.lastAck >= this.ackSize) {
+        this.lastAck = this.inAck;
+        this.sendACK(this.inAck)
+    }
   }
 
   
@@ -847,8 +802,8 @@ class RTMP_SESSION {
 
     //서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
     this.publishStreamPath = "/" + this.appname + "/" + msg.st_name.split("?")[0];
-    this.publishStreamId = this.parsedPacket.chunkMessageHeader.ms_id;
-
+    this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
+   // this.publishStreamId = this.parsedPacket.chunkMessageHeader.ms_id;
     if(this.status[0] == 0) return;
 
     //if(this.)
