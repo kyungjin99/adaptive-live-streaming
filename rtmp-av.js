@@ -68,9 +68,8 @@ function getSampleFrequency(bitOpr, info) {
   info.samplingFrequencyIdx = bitOpr.read(4);
   if (info.sampleFrequency === 0x0F) {
     return bitOpr.read(24);
-  } else {
-    return AAC_SAMPLE_RATE[info.samplingFrequencyIdx];
   }
+  return AAC_SAMPLE_RATE[info.samplingFrequencyIdx];
 }
 
 function getChannelNumber(bitOpr, info) {
@@ -102,12 +101,11 @@ function getProfileName(info) {
     default:
       return '';
   }
-
 }
 
 function readAacHeader(aacSequenceHeader) {
-  let info = {};
-  let bitOpr = new BitOpr(aacSequenceHeader);
+  const info = {};
+  const bitOpr = new BitOpr(aacSequenceHeader);
   info.objectType = getObjectType(bitOpr);
   info.sampleFrequency = getSampleFrequency(bitOpr, info);
   info.channelNumber = getChannelNumber(bitOpr, info);
@@ -133,11 +131,19 @@ function readAacHeader(aacSequenceHeader) {
 
 // (!) video handler. AVC(H.264) HEVC(H.265)
 function readH264SpecificConfig(avcSequenceHeader) {
-  let info = {};
-  let profile_idc, width, height, crop_left, crop_right,
-    crop_top, crop_bottom, frame_mbs_only, n, cf_idc,
-    num_ref_frames;
-  let bitop = new Bitop(avcSequenceHeader);
+  const info = {};
+  let profileIdc;
+  let width;
+  let height;
+  let cropLeft;
+  let cropRight;
+  let cropTop;
+  let cropBottom;
+  let frameMbsOnly;
+  let n;
+  let cfIdc;
+  let numRefFrames;
+  const bitop = new Bitop(avcSequenceHeader);
   bitop.read(48);
   info.width = 0;
   info.height = 0;
@@ -148,18 +154,18 @@ function readH264SpecificConfig(avcSequenceHeader) {
     info.level = bitop.read(8);
     info.nalu = (bitop.read(8) & 0x03) + 1;
     info.nb_sps = bitop.read(8) & 0x1F;
-    if (info.nb_sps == 0) {
+    if (info.nb_sps === 0) {
       break;
     }
     /* nal size */
     bitop.read(16);
 
     /* nal type */
-    if (bitop.read(8) != 0x67) {
+    if (bitop.read(8) !== 0x67) {
       break;
     }
     /* SPS */
-    profile_idc = bitop.read(8);
+    profileIdc = bitop.read(8);
 
     /* flags */
     bitop.read(8);
@@ -170,14 +176,13 @@ function readH264SpecificConfig(avcSequenceHeader) {
     /* SPS id */
     bitop.read_golomb();
 
-    if (profile_idc == 100 || profile_idc == 110 ||
-      profile_idc == 122 || profile_idc == 244 || profile_idc == 44 ||
-      profile_idc == 83 || profile_idc == 86 || profile_idc == 118) {
+    if (profileIdc === 100 || profileIdc === 110
+      || profileIdc === 122 || profileIdc === 244 || profileIdc === 44
+      || profileIdc === 83 || profileIdc === 86 || profileIdc === 118) {
       /* chroma format idc */
-      cf_idc = bitop.read_golomb();
+      cfIdc = bitop.read_golomb();
 
-      if (cf_idc == 3) {
-
+      if (cfIdc === 3) {
         /* separate color plane */
         bitop.read(1);
       }
@@ -193,9 +198,7 @@ function readH264SpecificConfig(avcSequenceHeader) {
 
       /* seq scaling matrix present */
       if (bitop.read(1)) {
-
-        for (n = 0; n < (cf_idc != 3 ? 8 : 12); n++) {
-
+        for (n = 0; n < (cfIdc !== 3 ? 8 : 12); n++) {
           /* seq scaling list present */
           if (bitop.read(1)) {
 
@@ -215,13 +218,11 @@ function readH264SpecificConfig(avcSequenceHeader) {
     /* pic order cnt type */
     switch (bitop.read_golomb()) {
       case 0:
-
         /* max pic order cnt */
         bitop.read_golomb();
         break;
 
       case 1:
-
         /* delta pic order alwys zero */
         bitop.read(1);
 
@@ -232,13 +233,14 @@ function readH264SpecificConfig(avcSequenceHeader) {
         bitop.read_golomb();
 
         /* num ref frames in pic order */
-        num_ref_frames = bitop.read_golomb();
+        numRefFrames = bitop.read_golomb();
 
-        for (n = 0; n < num_ref_frames; n++) {
-
+        for (n = 0; n < numRefFrames; n++) {
           /* offset for ref frame */
           bitop.read_golomb();
         }
+        break;
+      default:
     }
 
     /* num ref frames */
@@ -254,10 +256,9 @@ function readH264SpecificConfig(avcSequenceHeader) {
     height = bitop.read_golomb();
 
     /* frame mbs only flag */
-    frame_mbs_only = bitop.read(1);
+    frameMbsOnly = bitop.read(1);
 
-    if (!frame_mbs_only) {
-
+    if (!frameMbsOnly) {
       /* mbs adaprive frame field */
       bitop.read(1);
     }
@@ -267,120 +268,117 @@ function readH264SpecificConfig(avcSequenceHeader) {
 
     /* frame cropping */
     if (bitop.read(1)) {
-
-      crop_left = bitop.read_golomb();
-      crop_right = bitop.read_golomb();
-      crop_top = bitop.read_golomb();
-      crop_bottom = bitop.read_golomb();
-
+      cropLeft = bitop.read_golomb();
+      cropRight = bitop.read_golomb();
+      cropTop = bitop.read_golomb();
+      cropBottom = bitop.read_golomb();
     } else {
-      crop_left = 0;
-      crop_right = 0;
-      crop_top = 0;
-      crop_bottom = 0;
+      cropLeft = 0;
+      cropRight = 0;
+      cropTop = 0;
+      cropBottom = 0;
     }
-    info.level = info.level / 10.0;
-    info.width = (width + 1) * 16 - (crop_left + crop_right) * 2;
-    info.height = (2 - frame_mbs_only) * (height + 1) * 16 - (crop_top + crop_bottom) * 2;
-
+    info.level /= 10.0;
+    info.width = (width + 1) * 16 - (cropLeft + cropRight) * 2;
+    info.height = (2 - frameMbsOnly) * (height + 1) * 16 - (cropTop + cropBottom) * 2;
   } while (0);
 
   return info;
 }
 
-function HEVCParsePtl(bitop, hevc, max_sub_layers_minus1) {
-  let general_ptl = {};
+function HEVCParsePtl(bitop, hevc, maxSubLayersMinus1) {
+  const generalPtl = {};
 
-  general_ptl.profile_space = bitop.read(2);
-  general_ptl.tier_flag = bitop.read(1);
-  general_ptl.profile_idc = bitop.read(5);
-  general_ptl.profile_compatibility_flags = bitop.read(32);
-  general_ptl.general_progressive_source_flag = bitop.read(1);
-  general_ptl.general_interlaced_source_flag = bitop.read(1);
-  general_ptl.general_non_packed_constraint_flag = bitop.read(1);
-  general_ptl.general_frame_only_constraint_flag = bitop.read(1);
+  generalPtl.profile_space = bitop.read(2);
+  generalPtl.tier_flag = bitop.read(1);
+  generalPtl.profileIdc = bitop.read(5);
+  generalPtl.profile_compatibility_flags = bitop.read(32);
+  generalPtl.general_progressive_source_flag = bitop.read(1);
+  generalPtl.general_interlaced_source_flag = bitop.read(1);
+  generalPtl.general_non_packed_constraint_flag = bitop.read(1);
+  generalPtl.general_frame_only_constraint_flag = bitop.read(1);
   bitop.read(32);
   bitop.read(12);
-  general_ptl.level_idc = bitop.read(8);
+  generalPtl.level_idc = bitop.read(8);
 
-  general_ptl.sub_layer_profile_present_flag = [];
-  general_ptl.sub_layer_level_present_flag = [];
+  generalPtl.sub_layer_profile_present_flag = [];
+  generalPtl.sub_layer_level_present_flag = [];
 
-  for (let i = 0; i < max_sub_layers_minus1; i++) {
-    general_ptl.sub_layer_profile_present_flag[i] = bitop.read(1);
-    general_ptl.sub_layer_level_present_flag[i] = bitop.read(1);
+  for (let i = 0; i < maxSubLayersMinus1; i++) {
+    generalPtl.sub_layer_profile_present_flag[i] = bitop.read(1);
+    generalPtl.sub_layer_level_present_flag[i] = bitop.read(1);
   }
 
-  if (max_sub_layers_minus1 > 0) {
-    for (let i = max_sub_layers_minus1; i < 8; i++) {
-      bitop.read(2)
+  if (maxSubLayersMinus1 > 0) {
+    for (let i = maxSubLayersMinus1; i < 8; i++) {
+      bitop.read(2);
     }
   }
 
-  general_ptl.sub_layer_profile_space = [];
-  general_ptl.sub_layer_tier_flag = [];
-  general_ptl.sub_layer_profile_idc = [];
-  general_ptl.sub_layer_profile_compatibility_flag = [];
-  general_ptl.sub_layer_progressive_source_flag = [];
-  general_ptl.sub_layer_interlaced_source_flag = [];
-  general_ptl.sub_layer_non_packed_constraint_flag = [];
-  general_ptl.sub_layer_frame_only_constraint_flag = [];
-  general_ptl.sub_layer_level_idc = [];
+  generalPtl.sub_layer_profile_space = [];
+  generalPtl.sub_layer_tier_flag = [];
+  generalPtl.sub_layer_profileIdc = [];
+  generalPtl.sub_layer_profile_compatibility_flag = [];
+  generalPtl.sub_layer_progressive_source_flag = [];
+  generalPtl.sub_layer_interlaced_source_flag = [];
+  generalPtl.sub_layer_non_packed_constraint_flag = [];
+  generalPtl.sub_layer_frame_only_constraint_flag = [];
+  generalPtl.sub_layer_level_idc = [];
 
-  for (let i = 0; i < max_sub_layers_minus1; i++) {
-    if (general_ptl.sub_layer_profile_present_flag[i]) {
-      general_ptl.sub_layer_profile_space[i] = bitop.read(2);
-      general_ptl.sub_layer_tier_flag[i] = bitop.read(1);
-      general_ptl.sub_layer_profile_idc[i] = bitop.read(5);
-      general_ptl.sub_layer_profile_compatibility_flag[i] = bitop.read(32);
-      general_ptl.sub_layer_progressive_source_flag[i] = bitop.read(1);
-      general_ptl.sub_layer_interlaced_source_flag[i] = bitop.read(1);
-      general_ptl.sub_layer_non_packed_constraint_flag[i] = bitop.read(1);
-      general_ptl.sub_layer_frame_only_constraint_flag[i] = bitop.read(1);
+  for (let i = 0; i < maxSubLayersMinus1; i++) {
+    if (generalPtl.sub_layer_profile_present_flag[i]) {
+      generalPtl.sub_layer_profile_space[i] = bitop.read(2);
+      generalPtl.sub_layer_tier_flag[i] = bitop.read(1);
+      generalPtl.sub_layer_profileIdc[i] = bitop.read(5);
+      generalPtl.sub_layer_profile_compatibility_flag[i] = bitop.read(32);
+      generalPtl.sub_layer_progressive_source_flag[i] = bitop.read(1);
+      generalPtl.sub_layer_interlaced_source_flag[i] = bitop.read(1);
+      generalPtl.sub_layer_non_packed_constraint_flag[i] = bitop.read(1);
+      generalPtl.sub_layer_frame_only_constraint_flag[i] = bitop.read(1);
       bitop.read(32);
       bitop.read(12);
     }
-    if (general_ptl.sub_layer_level_present_flag[i]) {
-      general_ptl.sub_layer_level_idc[i] = bitop.read(8);
-    }
-    else {
-      general_ptl.sub_layer_level_idc[i] = 1;
+    if (generalPtl.sub_layer_level_present_flag[i]) {
+      generalPtl.sub_layer_level_idc[i] = bitop.read(8);
+    } else {
+      generalPtl.sub_layer_level_idc[i] = 1;
     }
   }
-  return general_ptl;
+  return generalPtl;
 }
 
 function HEVCParseSPS(SPS, hevc) {
-  let psps = {};
-  let NumBytesInNALunit = SPS.length;
-  let NumBytesInRBSP = 0;
-  let rbsp_array = [];
-  let bitop = new Bitop(SPS);
+  const psps = {};
+  const NumBytesInNALunit = SPS.length;
+  const NumBytesInRBSP = 0;
+  const rbspArray = [];
+  const bitop = new Bitop(SPS);
 
-  bitop.read(1);//forbidden_zero_bit
-  bitop.read(6);//nal_unit_type
-  bitop.read(6);//nuh_reserved_zero_6bits
-  bitop.read(3);//nuh_temporal_id_plus1
+  bitop.read(1); // forbidden_zero_bit
+  bitop.read(6); // nal_unit_type
+  bitop.read(6); // nuh_reserved_zero_6bits
+  bitop.read(3); // nuh_temporal_id_plus1
 
   for (let i = 2; i < NumBytesInNALunit; i++) {
-    if (i + 2 < NumBytesInNALunit && bitop.look(24) == 0x000003) {
-      rbsp_array.push(bitop.read(8));
-      rbsp_array.push(bitop.read(8));
+    if (i + 2 < NumBytesInNALunit && bitop.look(24) === 0x000003) {
+      rbspArray.push(bitop.read(8));
+      rbspArray.push(bitop.read(8));
       i += 2;
-      let emulation_prevention_three_byte = bitop.read(8); /* equal to 0x03 */
+      // let emulationPreventionThreeByte = bitop.read(8); /* equal to 0x03 */
+      bitop.read(8); /* equal to 0x03 */
     } else {
-      rbsp_array.push(bitop.read(8));
+      rbspArray.push(bitop.read(8));
     }
   }
-  let rbsp = Buffer.from(rbsp_array);
-  let rbspBitop = new Bitop(rbsp);
+  const rbsp = Buffer.from(rbspArray);
+  const rbspBitop = new Bitop(rbsp);
   psps.sps_video_parameter_set_id = rbspBitop.read(4);
-  psps.sps_max_sub_layers_minus1 = rbspBitop.read(3);
+  psps.sps_maxSubLayersMinus1 = rbspBitop.read(3);
   psps.sps_temporal_id_nesting_flag = rbspBitop.read(1);
-  psps.profile_tier_level = HEVCParsePtl(rbspBitop, hevc, psps.sps_max_sub_layers_minus1);
+  psps.profile_tier_level = HEVCParsePtl(rbspBitop, hevc, psps.sps_maxSubLayersMinus1);
   psps.sps_seq_parameter_set_id = rbspBitop.read_golomb();
   psps.chroma_format_idc = rbspBitop.read_golomb();
-  if (psps.chroma_format_idc == 3) {
+  if (psps.chroma_format_idc === 3) {
     psps.separate_colour_plane_flag = rbspBitop.read(1);
   } else {
     psps.separate_colour_plane_flag = 0;
@@ -389,19 +387,19 @@ function HEVCParseSPS(SPS, hevc) {
   psps.pic_height_in_luma_samples = rbspBitop.read_golomb();
   psps.conformance_window_flag = rbspBitop.read(1);
   if (psps.conformance_window_flag) {
-    let vert_mult = 1 + (psps.chroma_format_idc < 2);
-    let horiz_mult = 1 + (psps.chroma_format_idc < 3);
-    psps.conf_win_left_offset = rbspBitop.read_golomb() * horiz_mult;
-    psps.conf_win_right_offset = rbspBitop.read_golomb() * horiz_mult;
-    psps.conf_win_top_offset = rbspBitop.read_golomb() * vert_mult;
-    psps.conf_win_bottom_offset = rbspBitop.read_golomb() * vert_mult;
+    const vertMult = 1 + (psps.chroma_format_idc < 2);
+    const horizMult = 1 + (psps.chroma_format_idc < 3);
+    psps.conf_win_left_offset = rbspBitop.read_golomb() * horizMult;
+    psps.conf_win_right_offset = rbspBitop.read_golomb() * horizMult;
+    psps.conf_win_top_offset = rbspBitop.read_golomb() * vertMult;
+    psps.conf_win_bottom_offset = rbspBitop.read_golomb() * vertMult;
   }
   // Logger.debug(psps);
   return psps;
 }
 
 function readHEVCSpecificConfig(hevcSequenceHeader) {
-  let info = {};
+  const info = {};
   info.width = 0;
   info.height = 0;
   info.profile = 0;
@@ -411,18 +409,18 @@ function readHEVCSpecificConfig(hevcSequenceHeader) {
   hevcSequenceHeader = hevcSequenceHeader.slice(5);
 
   do {
-    let hevc = {};
+    const hevc = {};
     if (hevcSequenceHeader.length < 23) {
       break;
     }
 
     hevc.configurationVersion = hevcSequenceHeader[0];
-    if (hevc.configurationVersion != 1) {
+    if (hevc.configurationVersion !== 1) {
       break;
     }
     hevc.general_profile_space = (hevcSequenceHeader[1] >> 6) & 0x03;
     hevc.general_tier_flag = (hevcSequenceHeader[1] >> 5) & 0x01;
-    hevc.general_profile_idc = hevcSequenceHeader[1] & 0x1F;
+    hevc.general_profileIdc = hevcSequenceHeader[1] & 0x1F;
     hevc.general_profile_compatibility_flags = (hevcSequenceHeader[2] << 24) | (hevcSequenceHeader[3] << 16) | (hevcSequenceHeader[4] << 8) | hevcSequenceHeader[5];
     hevc.general_constraint_indicator_flags = ((hevcSequenceHeader[6] << 24) | (hevcSequenceHeader[7] << 16) | (hevcSequenceHeader[8] << 8) | hevcSequenceHeader[9]);
     hevc.general_constraint_indicator_flags = (hevc.general_constraint_indicator_flags << 16) | (hevcSequenceHeader[10] << 8) | hevcSequenceHeader[11];
@@ -437,14 +435,15 @@ function readHEVCSpecificConfig(hevcSequenceHeader) {
     hevc.numTemporalLayers = (hevcSequenceHeader[21] >> 3) & 0x07;
     hevc.temporalIdNested = (hevcSequenceHeader[21] >> 2) & 0x01;
     hevc.lengthSizeMinusOne = hevcSequenceHeader[21] & 0x03;
-    let numOfArrays = hevcSequenceHeader[22];
+    const numOfArrays = hevcSequenceHeader[22];
     let p = hevcSequenceHeader.slice(23);
     for (let i = 0; i < numOfArrays; i++) {
       if (p.length < 3) {
-        brak;
+        break;
       }
-      let nalutype = p[0];
-      let n = (p[1]) << 8 | p[2];
+      const nalutype = p[0];
+      // const n = (p[1]) << 8 | p[2];
+      const n = (p[1] << 8) | p[2];
       // Logger.debug(nalutype, n);
       p = p.slice(3);
       for (let j = 0; j < n; j++) {
@@ -457,13 +456,13 @@ function readHEVCSpecificConfig(hevcSequenceHeader) {
           break;
         }
         p = p.slice(2);
-        if (nalutype == 33) {
-          //SPS
-          let sps = Buffer.alloc(k);
+        if (nalutype === 33) {
+          // SPS
+          const sps = Buffer.alloc(k);
           p.copy(sps, 0, 0, k);
           // Logger.debug(sps, sps.length);
           hevc.psps = HEVCParseSPS(sps, hevc);
-          info.profile = hevc.general_profile_idc;
+          info.profile = hevc.general_profileIdc;
           info.level = hevc.general_level_idc / 30.0;
           info.width = hevc.psps.pic_width_in_luma_samples - (hevc.psps.conf_win_left_offset + hevc.psps.conf_win_right_offset);
           info.height = hevc.psps.pic_height_in_luma_samples - (hevc.psps.conf_win_top_offset + hevc.psps.conf_win_bottom_offset);
@@ -477,14 +476,15 @@ function readHEVCSpecificConfig(hevcSequenceHeader) {
 }
 
 function readAVCSpecificConfig(avcSequenceHeader) {
-  let codec_id = avcSequenceHeader[0] & 0x0f;
-  if (codec_id == 7) {
-    return readH264SpecificConfig(avcSequenceHeader);
-  } else if (codec_id == 12) {
-    return readHEVCSpecificConfig(avcSequenceHeader);
+  const codecId = avcSequenceHeader[0] & 0x0f;
+  let res;
+  if (codecId === 7) {
+    res = readH264SpecificConfig(avcSequenceHeader);
+  } else if (codecId === 12) {
+    res = readHEVCSpecificConfig(avcSequenceHeader);
   }
+  return res;
 }
-
 
 function getAVCProfileName(info) {
   switch (info.profile) {
@@ -503,7 +503,7 @@ function getAVCProfileName(info) {
     default:
       return '';
   }
-}v
+}
 
 module.exports = {
   AUDIO_SOUND_RATE,

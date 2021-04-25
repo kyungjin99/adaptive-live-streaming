@@ -13,10 +13,11 @@
     },
     "rules": {
         "no-console": "off",
+        "prefer-destructuring": "off",
         "no-use-before-define": ["error", { "functions": false, "classes": true }],
         "no-unused-vars": "off",
         "class-methods-use-this": "off",
-        "no-bitwise": ["error", { "allow": ["~", "|", ">>", "<<", "&"] }],
+        "no-bitwise": ["error", { "allow": ["~", "|", ">>", "<<", "&", "<<=", ">>="] }],
         "no-shadow": ["off"],
         "linebreak-style": 0,
         "max-len": "off",
@@ -25,6 +26,8 @@
         "consistent-return": "off",
         "no-plusplus": "off",
         "no-restricted-syntax": "off",
-        "no-useless-return": "off"
+        "no-useless-return": "off",
+        "no-param-reassign": "off",
+        "no-constant-condition": "off"
     }
 }
