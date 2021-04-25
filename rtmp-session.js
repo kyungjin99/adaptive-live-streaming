@@ -1,7 +1,7 @@
-const HANDSHAKE = require('./rtmp-handshake');
 const AMF = require('node-amfutils');
-const CURRENT_PROGRESS = require('./rtmp_center_ad');
-const GENERATOR = require('./rtmp_center_gen');
+const HANDSHAKE = require('./rtmp-handshake');
+const CURRENT_PROGRESS = require('./rtmp-center-ad');
+const GENERATOR = require('./rtmp-center-gen');
 const AV = require('./rtmp-av');
 const { AUDIO_SOUND_RATE, AUDIO_CODEC_NAME, VIDEO_CODEC_NAME } = require('./rtmp-av');
 
@@ -133,7 +133,7 @@ const cmdStructure = {
       cmd: 'createStream',
       transId,
       cmdObj,
-    }
+    };
   },
   sendCreateStreamCmd: () => {
     return {
@@ -144,7 +144,6 @@ const cmdStructure = {
     };
   },
 };
-
 
 class RTMP_SESSION {
   constructor(socket) {
@@ -194,10 +193,10 @@ class RTMP_SESSION {
 
     // net stream
     this.nowStreamId = 0;
-    this.nowStreamPath= "";
+    this.nowStreamPath = '';
     this.nowArgs = {};
     this.publishStreamId = 0;
-    this.publishStreamPath = "";
+    this.publishStreamPath = '';
     this.publishArgs = {};
     this.status = Buffer.from('0000011', 'binary'); // range 0 ~ 6
     // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
@@ -289,9 +288,6 @@ class RTMP_SESSION {
     let dataOffset = readBytes; // current offset of a chunk data received
 
     while (dataOffset < length) { // until finishing reading chunk
-
-      this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
-
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
           this.parsedChunkBuf[0] = data[readBytes + dataOffset]; // read 1 byte from data and write to buf
@@ -394,6 +390,7 @@ class RTMP_SESSION {
         default: break;
       }
     }
+    this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
   }
 
   parseChunkBasicHeader() { // fmt, csid
@@ -517,7 +514,6 @@ class RTMP_SESSION {
     return buf;
   }
 
-
   createChunks(packet) { // create chunks from a packet and interleave them in a buffer
     // calculate the size of header and payload
     let totalBufSize = 0; // to allocate buffer
@@ -632,12 +628,11 @@ class RTMP_SESSION {
   }
 
   parseCmdMsg(amfType, payload) {
-    const amf = (amfType == COMMAND_MESSAGE_AMF0) ? 0 : 3;
+    const amf = (amfType === COMMAND_MESSAGE_AMF0) ? 0 : 3;
     // decode payload data according to AMF
     const decodedMsg = (amf === 0) ? AMF.decodeAmf0Cmd(payload) : AMF.decodeAmf3Cmd(payload);
     const cmdName = decodedMsg.cmd;
-    const transactionId = decodedMsg.transId;
-    const cmdObj = decodedMsg.cmdObj; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
+    const { cmdObj, transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
 
     switch (cmdName) {
       case 'connect':
@@ -822,6 +817,7 @@ class RTMP_SESSION {
     buff.writeUInt32BE(bytes, 12);
     this.socket.write(buff);
   }
+
   /* 2. 윈도우 크기 메시지
       클라이언트/서버는 상대가 보내는 데이터 사이즈를 제한하하기 위해 메시지를 보낸다.
   */
@@ -831,35 +827,11 @@ class RTMP_SESSION {
     this.socket.write(buff);
   }
 
-  /*
-    PCM 전송 시 사용되는 메서드들
-  */
-  /* 1. 그동안 읽은 바이트 수 메시지
-        디테일 설명 : ACK
-        클라이언트/서버는 윈도우크기인 바이트 수를 받은 이후에 ACK 메시지를 보내야 한다.
-        윈도우 크기는 보낸이가 ACK를 받지 못한 상태에서 보내는 최대 바이트 수이다.
-        이것은 시퀀수 수인데 결국 지금까지 받은 바이트 수를 말한다. (최대 4B=2^32-1까지 표현)
-    */
-  sendACK(bytes) {
-    let buff = Buffer.from("02000000000004030000000000000000", "hex");
-    buff.writeUInt32BE(bytes, 12);
-    this.socket.write(buff);
-  }
-
-  /* 2. 윈도우 크기 메시지
-      클라이언트/서버는 상대가 보내는 데이터 사이즈를 제한하하기 위해 메시지를 보낸다.
-  */
-  rtmpWindowACK(wsize) {
-    let buff = Buffer.from("02000000000004050000000000000000", "hex");
-    buff.writeUInt32BE(wsize, 12);
-    this.socket.write(buff);
-  }
   /* 3. 대역폭 조절 메시지
   대역폭제한 메시지를 받은 상대는 메시지 정보에 맞춰 대역폭을 줄인다.
   또한 윈도우 창크기를 조절했다는 ACK 사이즈 메시지(4B) + Limit type(1B)를 보내줘야한다.
   (윈도우 창크기가 대역폭 조절 사이즈와 다른경우)
   */
-
   sendBandWidth(limit, type) {
     const buff = Buffer.from('0200000000000506000000000000000000', 'hex');
     buff.writeUInt32BE(limit, 12);
@@ -870,24 +842,22 @@ class RTMP_SESSION {
   checkAck(data) {
     this.inAck += data.length;
 
-    if(this.inAck >= 0xf0000000) { //왜 비트정렬이 1111 0000 0000 0000 ---인지
-        this.inAck = 0;
-        this.lastAck = 0;
+    if (this.inAck >= 0xf0000000) { // 왜 비트정렬이 1111 0000 0000 0000 ---인지
+      this.inAck = 0;
+      this.lastAck = 0;
     }
 
     // 정상적인 ACK 메시지 = 지금까지 받은 바이트 수를 보낸 경우
-    if(this.ackSize > 0 && this.inAck - this.lastAck >= this.ackSize) {
-        this.lastAck = this.inAck;
-        this.sendACK(this.inAck)
+    if (this.ackSize > 0 && this.inAck - this.lastAck >= this.ackSize) {
+      this.lastAck = this.inAck;
+      this.sendACK(this.inAck);
     }
   }
-
-
 
   // USER CONTROL MESSAGES
   ucmHandler(payload) {
     const ucmType = payload.readUInt16BE();
-    switch(ucmType) {
+    switch (ucmType) {
       case UCM_SET_BUFFER_LENGTH: {
         this.setBufferLength(payload);
         break;
@@ -967,7 +937,7 @@ class RTMP_SESSION {
     else this.pingRequestTimestamp = null;
   }
 
-  //NetStream
+  // NetStream
   /*
   명령어를 사용하는 때 : 클라이언트가 스트림을 새로 만들고자 할 때
   이름을 통해, 어떤 클라이언트든 해당 스트림에서 재생하고 오디오-비디오-데이터메시지를 받을 수 있다.
@@ -983,11 +953,11 @@ class RTMP_SESSION {
   publish(msg) {
     if (typeof msg.streamName !== 'string') return;
 
-    //서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
-    this.publishStreamPath = '/' + this.appname + '/' + msg.streamName.split('?')[0];
+    // 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
+    this.publishStreamPath = `/${this.appname}/${msg.streamName.split('?')[0]}`;
     this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     if (this.status[0] === 0) return;
-    //if(this.)
+    // if(this.)
   }
 
   receiveAudio(msg) {
@@ -1026,7 +996,7 @@ class RTMP_SESSION {
           this.sendStatus(); // "NetStream.Unpublish.Success" 상태메시지 보내기
         }
 
-        for(let participantId of this.players) {
+        for (const participantId of this.players) {
           const session = CURRENT_PROGRESS.sessions.get(participantId);
 
           if (session instanceof RTMPSession) {
@@ -1036,7 +1006,7 @@ class RTMP_SESSION {
         }
 
         // RTMPSession 클래스 타입이 아닌 세션 정리한 후
-        for(let realParticipantId of this.players) {
+        for (const realParticipantId of this.players) {
           const realSession = CURRENT_PROGRESS.sessions.get(realParticipantId);
           CURRENT_PROGRESS.idlePlayers.add(realParticipantId);
           realSession.status[2] = 0; // not playing
@@ -1056,14 +1026,12 @@ class RTMP_SESSION {
     }
   }
 
-
-
   /* about audio, video */
   audioHandler() {
-    let payload = this.parsePacket.payload.slice(0, this.parsePacket.payload.length); // (!)header.length
-    let soundFormat = (payload[0] >> 4) & 0x0f;
-    let soundRate = (payload[0] >> 2) & 0x03;
-    let soundSize = (payload[0] >> 1) & 0x1;
+    const payload = this.parsePacket.payload.slice(0, this.parsePacket.payload.length); // (!)header.length
+    const soundFormat = (payload[0] >> 4) & 0x0f;
+    const soundRate = (payload[0] >> 2) & 0x03;
+    const soundSize = (payload[0] >> 1) & 0x1;
     let soundType = (payload[0]) & 0x01;
 
     // (!)check if first audio received
@@ -1090,80 +1058,76 @@ class RTMP_SESSION {
     // 0 : AACSequenceHeader, 1 : AAC raw
     // if AACPacketType == 0, AudioSpecificConfig
     // else if AACPacketType == 1, Raw AAC fream data
-    if (soundFormat === 10 & payload[1] == 0) {
+    if (soundFormat === 10 & payload[1] === 0) {
       this.aacSequenceHeader = Buffer.alloc(payload.length);
       payload.copy(this.aacSequenceHeader);
-      let aacInfo = AV.readAacHeader(this.aacSequenceHeader);
+      const aacInfo = AV.readAacHeader(this.aacSequenceHeader);
       this.audioProfileName = aacInfo.profileName;
       this.audioSampleRate = aacInfo.sampleFrequency;
       this.audioChannels = aacInfo.channelNumber;
 
       // if AAC, print info
-
     }
 
     // repackaging
-    let packet = RtmpPacket.create();
+    const packet = RtmpPacket.create();
     packet.header.fmt = RTMP_CHUNK_TYPE_0;
     packet.header.cid = RTMP_CHANNEL_AUDIO;
     packet.header.type = RTMP_TYPE_AUDIO;
     packet.payload = payload; // payload of received parsePacket
-    packet.payload.length = packet.payload.length; // (!)header.length
+    packet.payload.length = packet.payload.length; // (!)header.length // TODO: no-self-assign eslint 오류. 수정 요망
     packet.header.timestamp = this.parsePacket.clock;
 
-    let rtmpChunks = this.createChunks(packet);
+    const rtmpChunks = this.createChunks(packet);
 
     // (!)player session buffer cork()
-
   }
 
-
   videoHandler() {
-    let payload = this.parserPacket.payload.slice(0, this.parserPacket.payload.length); // (!)header.length
-    let frameType = (payload[0] >> 4) & 0x0f;
-    let codecId = payload[0] & 0x0f;
+    const payload = this.parserPacket.payload.slice(0, this.parserPacket.payload.length); // (!)header.length
+    const frameType = (payload[0] >> 4) & 0x0f;
+    const codecId = payload[0] & 0x0f;
 
     // AVC(H.264)
     // (!) codecID === 12, HEVC(H.265)
     if (codecId === 7) {
       this.avcSequenceHeader = Buffer.alloc(payload.length);
       payload.copy(this.avcSequenceHeader);
-      let info = AV.rCeadAVSHeader(this.avcSequenceHeader);
+      const info = AV.rCeadAVSHeader(this.avcSequenceHeader);
       this.videoWidth = info.width;
       this.videoHeight = info.height;
       this.videoProfileName = info.profileName;
       this.videoLevel = info.level;
-
     }
 
     // if this is first arrival
-    if (this.videoCodec == 0) {
-      this.videoCodec = codec_id;
-      this.videoCodecName = VIDEO_CODEC_NAME[codec_id];
+    if (this.videoCodec === 0) {
+      this.videoCodec = codecId;
+      this.videoCodecName = VIDEO_CODEC_NAME[codecId];
 
-      //print vidoe info
+      // print vidoe info
     }
 
-    //repackaging
-    let packet = RtmpPacket.create();
+    // repackaging
+    const packet = RtmpPacket.create();
     packet.header.fmt = RTMP_CHUNK_TYPE_0;
     packet.header.cid = RTMP_CHANNEL_VIDEO;
     packet.header.type = RTMP_TYPE_VIDEO;
     packet.payload = payload;
     packet.header.length = packet.payload.length;
     packet.header.timestamp = this.parserPacket.clock;
-    let rtmpChunks = this.createChunks(packet);
-    let flvTag = NodeFlvSession.createFlvTag(packet);
+    const rtmpChunks = this.createChunks(packet);
+    const flvTag = NodeFlvSession.createFlvTag(packet);
 
     // (!)session? address?
   }
 
   dataHandler() {
-    let offset = this.parserPacket.header.type === RTMP_TYPE_FLEX_STREAM ? 1 : 0;
-    let payload = this.parserPacket.payload.slice(offset, this.parserPacket.header.length);
-    let dataMessage = AMF.decodeAmf0Data(payload);
+    const offset = this.parserPacket.header.type === RTMP_TYPE_FLEX_STREAM ? 1 : 0;
+    const payload = this.parserPacket.payload.slice(offset, this.parserPacket.header.length);
+    const dataMessage = AMF.decodeAmf0Data(payload);
     switch (dataMessage.cmd) {
-      case "@setDataFrame":
+      case '@setDataFrame': {
         if (dataMessage.dataObj) {
           this.audioSamplerate = dataMessage.dataObj.audiosamplerate;
           this.audioChannels = dataMessage.dataObj.stereo ? 2 : 1;
@@ -1172,19 +1136,22 @@ class RTMP_SESSION {
           this.videoFps = dataMessage.dataObj.framerate;
         }
 
-        let opt = {
-          cmd: "onMetaData",
-          dataObj: dataMessage.dataObj
+        const opt = {
+          cmd: 'onMetaData',
+          dataObj: dataMessage.dataObj,
         };
         this.metaData = AMF.encodeAmf0Data(opt);
 
-        let packet = RtmpPacket.create();
+        const packet = RtmpPacket.create();
         packet.header.fmt = RTMP_CHUNK_TYPE_0;
         packet.header.cid = RTMP_CHANNEL_DATA;
         packet.header.type = RTMP_TYPE_DATA;
         packet.payload = this.metaData;
         packet.header.length = packet.payload.length;
-        let rtmpChunks = this.createChunks(packet);
+        const rtmpChunks = this.createChunks(packet);
+        break;
+      }
+      default:
     }
   }
 }
