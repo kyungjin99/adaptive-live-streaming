@@ -14,9 +14,17 @@
     "rules": {
         "no-console": "off",
         "no-use-before-define": ["error", { "functions": false, "classes": true }],
+        "no-unused-vars": "off",
         "class-methods-use-this": "off",
         "no-bitwise": ["error", { "allow": ["~", "|", ">>", "<<", "&"] }],
         "no-shadow": ["off"],
-        "linebreak-style": 0
+        "linebreak-style": 0,
+        "max-len": "off",
+        "arrow-body-style": "off",
+        "no-undef": "off",
+        "consistent-return": "off",
+        "no-plusplus": "off",
+        "no-restricted-syntax": "off",
+        "no-useless-return": "off"
     }
 }
