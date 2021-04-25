@@ -36,9 +36,9 @@ class RTMP_BITOPR {
   }
 
   look(n) {
-    let p = this.bufpos;
-    let o = this.bufoff;
-    let v = this.read(n);
+    const p = this.bufpos;
+    const o = this.bufoff;
+    const v = this.read(n);
     this.bufpos = p;
     this.bufoff = o;
     return v;
