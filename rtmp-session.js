@@ -1,7 +1,7 @@
 const HANDSHAKE = require('./rtmp-handshake');
 const AMF = require('node-amfutils');
-const CURRENT_PROGRESS = require('./rtmp_center_ad');
-const GENERATOR = require('./rtmp_center_gen');
+const CURRENT_PROGRESS = require('./rtmp-center-ad');
+const GENERATOR = require('./rtmp-center-gen');
 const AV = require('./rtmp-av');
 const { AUDIO_SOUND_RATE, AUDIO_CODEC_NAME, VIDEO_CODEC_NAME } = require('./rtmp-av');
 
@@ -289,9 +289,6 @@ class RTMP_SESSION {
     let dataOffset = readBytes; // current offset of a chunk data received
 
     while (dataOffset < length) { // until finishing reading chunk
-
-      this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
-
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
           this.parsedChunkBuf[0] = data[readBytes + dataOffset]; // read 1 byte from data and write to buf
@@ -394,6 +391,7 @@ class RTMP_SESSION {
         default: break;
       }
     }
+    this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
   }
 
   parseChunkBasicHeader() { // fmt, csid
