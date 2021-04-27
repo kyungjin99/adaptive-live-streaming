@@ -510,5 +510,5 @@ module.exports = {
   AUDIO_CODEC_NAME,
   VIDEO_CODEC_NAME,
   readAacHeader,
-  readAVCSHeader,
+  // readAVCSHeader,
 };

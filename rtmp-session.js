@@ -91,6 +91,7 @@ const packet = {
         },
       },
       payload: null,
+      bytes: 0,
     };
   },
 };
@@ -98,9 +99,9 @@ const packet = {
 const cmdStructure = {
   onConnectCmd: () => {
     return {
-      cmd,
+      cmd: null,
       transId: 1,
-      cmdObj,
+      cmdObj: null,
       args: null,
     };
   },
@@ -108,39 +109,39 @@ const cmdStructure = {
     return {
       cmd: '_result',
       transId: 1,
-      cmdObj,
-      info,
+      cmdObj: null,
+      info: null,
     };
   },
   onCallCmd: () => {
     return {
-      cmd,
-      transId,
-      cmdObj,
+      cmd: null,
+      transId: null,
+      cmdObj: null,
       args: null,
     };
   },
   sendCallCmd: () => {
     return {
       cmd: '_result',
-      transId,
-      cmdObj,
-      info,
+      transId: null,
+      cmdObj: null,
+      info: null,
     };
   },
   onCreateStreamCmd: () => {
     return {
       cmd: 'createStream',
-      transId,
-      cmdObj,
+      transId: null,
+      cmdObj: null,
     };
   },
   sendCreateStreamCmd: () => {
     return {
       cmd: '_result',
-      transId,
-      cmdObj,
-      info,
+      transId: null,
+      cmdObj: null,
+      info: null,
     };
   },
 };
@@ -285,14 +286,16 @@ class RTMP_SESSION {
   }
 
   readChunks(data, readBytes, length) {
-    let dataOffset = readBytes; // current offset of a chunk data received
+    let dataOffset = 0; // current offset of a chunk data received
+    length -= readBytes;
 
     while (dataOffset < length) { // until finishing reading chunk
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
           this.parsedChunkBuf[0] = data[readBytes + dataOffset]; // read 1 byte from data and write to buf
           this.bytesParsed += 1;
-          const bheaderType = this.parsedChunkBuf[0] & 0X3F; // the bottom 6 bits of the first byte
+          dataOffset += 1;
+          const bheaderType = this.parsedChunkBuf[0] & 0x3F; // the bottom 6 bits of the first byte
           switch (bheaderType) {
             case 0: // chunk basic header 2
               this.bheaderSize = 2;
@@ -324,16 +327,16 @@ class RTMP_SESSION {
           let endpoint = this.bheaderSize;
           switch (fmt) {
             case 0:
-              endpoint = 11;
+              endpoint += 11;
               break;
             case 1:
-              endpoint = 7;
+              endpoint += 7;
               break;
             case 2:
-              endpoint = 3;
+              endpoint += 3;
               break;
             case 3:
-              endpoint = 0;
+              endpoint += 0;
               break;
             default: break;
           }
@@ -363,26 +366,33 @@ class RTMP_SESSION {
               this.parsedPacket.header.chunkMessageHeader.timestamp = this.parsedChunkBuf.readUInt32BE(endpoint - 4);
             }
           }
+
+          // payload parsing 준비
+          if (!this.parsedPacket.payload) {
+            this.parsedPacket.payload = Buffer.alloc(this.chunkSize);
+          }
+
           this.parsingState = PARSE_PAYLOAD; // move on to the next step
           break;
         }
         case PARSE_PAYLOAD: { // parse payload
-          const size = length - dataOffset;
+          const size = Math.min(length - dataOffset, this.parsedPacket.header.chunkMessageHeader.plen - this.parsedPacket.bytes);
+
           // TODO: check payload size and realloc
-          data.copy(this.parsedPacket.payload, this.bytesParsed, dataOffset, dataOffset + size);
+          data.copy(this.parsedPacket.payload, this.parsedPacket.bytes, readBytes + dataOffset, readBytes + dataOffset + size);
+
+          this.parsedPacket.bytes += size;
           this.bytesParsed += size;
           dataOffset += size;
 
-          const totalPayloadSize = this.bytesParsed - (this.bheaderSize + this.mheaderSize + this.useExtendedTimestamp);
-          if (totalPayloadSize >= this.parsedPacket.header.chunkMessageHeader.plen) {
+          // const totalPayloadSize = this.bytesParsed - (this.bheaderSize + this.mheaderSize + this.useExtendedTimestamp);
+          if (this.parsedPacket.bytes >= this.parsedPacket.header.chunkMessageHeader.plen) {
             this.parsingState = PARSE_INIT; // finished reading a chunk. restart the parsing cycle
-            dataOffset = 0;
-
-            this.handler();
+            // dataOffset = 0;
 
             // clear parsedPacket
             this.bytesParsed = 0;
-            this.parsedPacket = packet.create();
+            this.parsedPacket.bytes = 0;
             this.handler();
           }
           break;
@@ -390,14 +400,12 @@ class RTMP_SESSION {
         default: break;
       }
     }
-    this.checkAck(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
+    this.checkACK(data); // TODO: 이 위치에 들어가는게 맞는지 확인 필요
   }
 
   parseChunkBasicHeader() { // fmt, csid
     const { bheaderSize } = this;
     const fmt = this.parsedChunkBuf[0] >> 6;
-    this.parsedPacket.header.basicHeader.fmt = fmt; // parse fmt
-
     let csid = 0;
     switch (bheaderSize) { // parse csid
       case 1: { // chunk basic header 1
@@ -414,6 +422,16 @@ class RTMP_SESSION {
       }
       default: break;
     }
+
+    this.parsedPacket = this.packetList.get(csid);
+
+    // packetList에서 현재 수신한 csid를 찾지 못했을 경우
+    if (!this.parsedPacket) {
+      this.parsedPacket = packet.create(fmt, csid);
+      this.packetList.set(csid, this.parsedPacket);
+    }
+
+    this.parsedPacket.header.basicHeader.fmt = fmt; // parse fmt
     this.parsedPacket.header.basicHeader.csid = csid;
   }
 
@@ -424,10 +442,10 @@ class RTMP_SESSION {
     // read timestamp (delta) field except for type3 chunks
     if (fmt < CHUNK_TYPE_3) {
       const timestamp = this.parsedChunkBuf.readUIntBE(offset, 3);
-      if (timestamp !== 0XFFFFFF) {
+      if (timestamp !== 0xFFFFFF) {
         this.parsedPacket.header.chunkMessageHeader.timestamp = timestamp;
       } else { // uses extended timestamp
-        this.parsedPacket.header.chunkMessageHeader.timestamp = 0XFFFFFF;
+        this.parsedPacket.header.chunkMessageHeader.timestamp = 0xFFFFFF;
       }
       offset += 3;
       this.mheaderSize += 3;
@@ -435,7 +453,7 @@ class RTMP_SESSION {
 
     // read message length and message stream id field for type 0, type 1 chunks
     if (fmt < CHUNK_TYPE_2) {
-      this.parsedPacket.header.chunkMessageHeader.timestamp = this.parsedChunkBuf.readUIntBE(offset, 3);
+      this.parsedPacket.header.chunkMessageHeader.plen = this.parsedChunkBuf.readUIntBE(offset, 3);
       offset += 3;
       this.parsedPacket.header.chunkMessageHeader.mtid = this.parsedChunkBuf.readUInt8(offset);
       offset += 1;
@@ -583,7 +601,7 @@ class RTMP_SESSION {
   }
 
   handler() {
-    const { mtid } = this.parsedPacket.header.chunkMessageHeader.mtid;
+    const { mtid } = this.parsedPacket.header.chunkMessageHeader;
     const { payload } = this.parsedPacket;
     switch (mtid) {
       // protocol control message
@@ -839,7 +857,7 @@ class RTMP_SESSION {
     this.socket.write(buff);
   }
 
-  checkAck(data) {
+  checkACK(data) {
     this.inAck += data.length;
 
     if (this.inAck >= 0xf0000000) { // 왜 비트정렬이 1111 0000 0000 0000 ---인지
@@ -1075,7 +1093,8 @@ class RTMP_SESSION {
     packet.header.cid = RTMP_CHANNEL_AUDIO;
     packet.header.type = RTMP_TYPE_AUDIO;
     packet.payload = payload; // payload of received parsePacket
-    packet.payload.length = packet.payload.length; // (!)header.length // TODO: no-self-assign eslint 오류. 수정 요망
+    // packet.payload.length = packet.payload.length; // (!)header.length // TODO: no-self-assign eslint 오류. 수정 요망
+    packet.payload.length = payload.length;
     packet.header.timestamp = this.parsePacket.clock;
 
     const rtmpChunks = this.createChunks(packet);
