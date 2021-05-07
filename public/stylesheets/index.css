@@ -1,0 +1,22 @@
+img {
+  width: 150px;
+  height: 100px;
+}
+
+figurecaption {
+  font-size: 25px;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 5px 5px;
+  border: 1px red solid;
+  background-color: #2196F3;
+}
+
+.grid-container > div {
+  background-color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+  font-size: 30px;
+}
