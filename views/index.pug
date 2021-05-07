@@ -1,0 +1,19 @@
+extends ./layout.pug
+
+block css
+  link(rel="stylesheet", href="stylesheets/style.css")
+  link(rel="stylesheet", href="stylesheets/index.css")
+
+block title
+  title 방송중인 스트리머 리스트
+
+block content
+  .grid-container
+    each url, idx in urls
+      div
+        a(href="/" + url)
+          figure
+            img(src="images/live.png", alt="")
+            br
+            figurecaption= ids[idx]
+      
