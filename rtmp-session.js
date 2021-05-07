@@ -5,6 +5,9 @@ const GENERATOR = require('./rtmp-center-gen');
 const AV = require('./rtmp-av');
 const { AUDIO_SOUND_RATE, AUDIO_CODEC_NAME, VIDEO_CODEC_NAME } = require('./rtmp-av');
 
+/* 기타 */
+const TIMEOUT = 10000;
+
 /* handshake */
 const HANDSHAKE_UNINIT = 0;
 const HANDSHAKE_INIT = 1;
@@ -156,6 +159,7 @@ class RTMP_SESSION {
     this.startTimestamp = Date.now();
 
     this.chunkSize = 128; // max bytes of data in a chunk (default 128)
+    this.outChunkSize = 60000;
 
     // ACK를 위한 변수
     this.ackSize = 0;
@@ -186,8 +190,6 @@ class RTMP_SESSION {
     this.onCreateStreamCmd = this.command.onCreateStreamCmd();
     this.sendCreateStreamCmd = this.command.sendCreateStreamCmd();
 
-    this.objectEncoding = null;
-
     // ?
     this.packetList = new Map();
     this.limitType = LIMIT_TYPE_HARD;
@@ -215,11 +217,16 @@ class RTMP_SESSION {
     this.socket.on('error', this.onSocketError.bind(this));
     this.socket.on('timeout', this.onSocketTimeout.bind(this));
     this.socket.on('close', this.onSocketClose.bind(this));
+    this.socket.setTimeout(TIMEOUT);
   }
 
   stop() {
     // TODO: 종료 시 추가적인 처리가 필요한가?
-    this.socket.close();
+    console.log(`[Socket Close] id=${this.id}`);
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+    }
+    this.socket.destroy();
   }
 
   onSocketData(data) {
@@ -394,7 +401,7 @@ class RTMP_SESSION {
 
             // clear parsedPacket
             this.bytesParsed = 0;
-            this.parsedPacket.bytes = 0;
+            // this.parsedPacket.bytes = 0;
             this.handler();
           }
           break;
@@ -477,15 +484,15 @@ class RTMP_SESSION {
     if (csid >= 2 && csid <= 63) { // chunk basic header 1
       buf = Buffer.alloc(1);
       buf[0] = (fmt << 6) | csid;
-    } else if (csid >= 64 && csid <= 319) { // chunk basic header 2
-      buf = Buffer.alloc(2);
-      buf[0] = (fmt << 6) | 0;
-      buf[1] = (csid - 64) & 0XFF;
-    } else if (csid >= 64 && csid <= 65599) { // chunk basic header 3
+    } else if (csid >= 319) { // chunk basic header 2
       buf = Buffer.alloc(3);
       buf[0] = (fmt << 6) | 1;
       buf[1] = (csid - 64) & 0xFF;
-      buf[2] = ((csid - 64) << 8) & 0xFF;
+      buf[2] = ((csid - 64) >> 8) & 0xFF;
+    } else if (csid >= 64 && csid <= 319) { // chunk basic header 3
+      buf = Buffer.alloc(2);
+      buf[0] = (fmt << 6) | 0;
+      buf[1] = (csid - 64) & 0XFF;
     }
     return buf;
   }
@@ -493,7 +500,7 @@ class RTMP_SESSION {
   createChunkMessageHeader(header) {
     const { basicHeader: bheader, chunkMessageHeader: mheader } = header;
     const {
-      timestamp, mlen, mtid, msid,
+      timestamp, plen, mtid, msid,
     } = mheader;
     let buf;
 
@@ -501,7 +508,6 @@ class RTMP_SESSION {
     switch (ctype) {
       case CHUNK_TYPE_0: // timestamp: 3B, message length: 3B, message type: 1B message stream: 4B
         buf = Buffer.alloc(11);
-        buf.writeUInt32LE(msid, 7); // message stream id (stored in little endian)
         break;
       case CHUNK_TYPE_1: // timestamp: 3B, message length: 3B, message type: 1B
         buf = Buffer.alloc(7);
@@ -518,8 +524,8 @@ class RTMP_SESSION {
 
     // add timestamp field except for type3 chunks
     if (ctype < CHUNK_TYPE_3) {
-      if (timestamp >= 0XFFFFFF) { // extended timestamp
-        buf.writeUIntBE(0XFFFFFF, 0, 3);
+      if (timestamp >= 0xFFFFFF) { // extended timestamp
+        buf.writeUIntBE(0xFFFFFF, 0, 3);
       } else {
         buf.writeUIntBE(timestamp, 0, 3);
       }
@@ -527,8 +533,13 @@ class RTMP_SESSION {
 
     // add message length and message type id field for type 0, type 1 chunks
     if (ctype < CHUNK_TYPE_2) {
-      buf.writeUIntBE(mlen, 3, 3); // message length
+      buf.writeUIntBE(plen, 3, 3); // message length
       buf.writeUInt8(mtid, 6); // message type id
+    }
+
+    // add message stream id field for type 0
+    if (ctype < CHUNK_TYPE_1) {
+      buf.writeUInt32LE(msid, 7); // message stream id (stored in little endian)
     }
 
     return buf;
@@ -553,8 +564,8 @@ class RTMP_SESSION {
     }
 
     // calculate the number of chunks
-    const numOfChunks = Math.ceil(header.chunkMessageHeader.plen / this.chunkSize);
-    totalBufSize = bheaderSize + mHeaderSize + extendedTimestampBuf.length; // first chunk size
+    const numOfChunks = Math.ceil(header.chunkMessageHeader.plen / this.outChunkSize);
+    totalBufSize = bheaderSize + mHeaderSize + useExtendedTimestamp; // first chunk size
     if (numOfChunks > 1) { // remainder chunks (all are type 3)
       totalBufSize += (bheaderSize + useExtendedTimestamp) * (numOfChunks - 1);
     }
@@ -571,8 +582,8 @@ class RTMP_SESSION {
       extendedTimestampBuf.copy(buf, bufOffset, 0, extendedTimestampBuf.length);
       bufOffset += extendedTimestampBuf.length;
     }
-    if (payloadSize > this.chunkSize) { // write payload
-      payload.copy(buf, bufOffset, 0, this.chunkSize);
+    if (payloadSize > this.outChunkSize) { // write payload
+      payload.copy(buf, bufOffset, 0, this.outChunkSize);
       // buf.write(payload, bufOffset, this.chunkSize); // write payload up to max chunk size
       payloadOffset += this.chunkSize;
       bufOffset += this.chunkSize;
@@ -595,12 +606,12 @@ class RTMP_SESSION {
         }
         // write partial payloads
         if (payloadSize - payloadOffset > 0) { // partial payload size < chunk size
-          payload.copy(buf, bufOffset, payloadOffset, payloadOffset + this.chunkSize);
+          payload.copy(buf, bufOffset, payloadOffset, payloadOffset + this.outChunkSize);
         } else { // partial payload size >= chunk size
           payload.copy(buf, bufOffset, payloadOffset, payloadSize);
         }
-        payloadOffset += this.chunkSize;
-        bufOffset += this.chunkSize;
+        payloadOffset += this.outChunkSize;
+        bufOffset += this.outChunkSize;
       }
     }
     return buf;
@@ -656,7 +667,8 @@ class RTMP_SESSION {
     // decode payload data according to AMF
     const decodedMsg = (amf === 0) ? AMF.decodeAmf0Cmd(payload) : AMF.decodeAmf3Cmd(payload);
     const cmdName = decodedMsg.cmd;
-    const { cmdObj, transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
+    const { cmdObj, transId: transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
+    console.log(decodedMsg);
 
     switch (cmdName) {
       case 'connect':
@@ -688,8 +700,14 @@ class RTMP_SESSION {
   }
 
   onConnect() {
-    this.sendWindowACK(4294967293); // TODO: fix (2^32-1)
-    this.setPeerBandwidth(4294967293, 2); // TODO: why dynamic limit type?
+    // this.sendWindowACK(4294967293); // TODO: fix (2^32-1)
+    // this.setPeerBandwidth(4294967293, 2); // TODO: why dynamic limit type?
+    this.sendWindowACK(5000000); // TODO: fix (2^32-1)
+    this.sendBandWidth(5000000, LIMIT_TYPE_DYNAMIC);
+    this.sendChunkSize(this.outChunkSize);
+    this.pingInterval = setInterval(() => {
+      this.sendPingRequest();
+    }, TIMEOUT);
     this.sendConnect();
   }
 
@@ -706,6 +724,7 @@ class RTMP_SESSION {
       level: 'status',
       code: 'NetConnection.Connect.Success',
       description: 'Connection succeeded',
+      objectEncoding: this.onConnectCmd.cmdObj.objectEncoding,
     };
     // send message to client
     this.sendCmdMsg('sendConnect');
@@ -717,6 +736,7 @@ class RTMP_SESSION {
     pkt.header.basicHeader.csid = 3; // TODO: declare const later (channel invoke)
     pkt.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0; // TODO: why?
     pkt.header.chunkMessageHeader.msid = 0;
+    console.log(this.sendConnectCmd);
     switch (cmdName) {
       case 'sendConnect':
         pkt.payload = AMF.encodeAmf0Cmd(this.sendConnectCmd);
@@ -838,6 +858,13 @@ class RTMP_SESSION {
         윈도우 크기는 보낸이가 ACK를 받지 못한 상태에서 보내는 최대 바이트 수이다.
         이것은 시퀀수 수인데 결국 지금까지 받은 바이트 수를 말한다. (최대 4B=2^32-1까지 표현)
    */
+
+  sendChunkSize(size) {
+    const buff = Buffer.from('02000000000004010000000000000000', 'hex');
+    buff.writeUInt32BE(size, 12);
+    this.socket.write(buff);
+  }
+
   sendACK(bytes) {
     const buff = Buffer.from('02000000000004030000000000000000', 'hex');
     buff.writeUInt32BE(bytes, 12);
@@ -922,7 +949,7 @@ class RTMP_SESSION {
     this.socket.write(this.createChunks(newPacket));
   }
 
-  pingRequest() {
+  sendPingRequest() {
     const newPacket = packet.create();
     const timestampDelta = Date.now() - this.startTimestamp;
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
