@@ -1,3 +1,4 @@
+const QueryString = require('querystring');
 const AMF = require('node-amfutils');
 const HANDSHAKE = require('./rtmp-handshake');
 const CURRENT_PROGRESS = require('./rtmp-center-ad');
@@ -147,6 +148,27 @@ const cmdStructure = {
       info: null,
     };
   },
+  onPublishCmd: () => {
+    return {
+      cmd: 'publish',
+      transId: null,
+      cmdObj: null,
+      name: null,
+      type: null,
+    };
+  },
+  sendPublishCmd: () => {
+    return {
+      cmd: 'onStatus',
+      transId: 0,
+      cmdObj: null,
+      info: {
+        level: null,
+        code: null,
+        description: null,
+      },
+    };
+  },
 };
 
 class RTMP_SESSION {
@@ -190,11 +212,15 @@ class RTMP_SESSION {
     this.onCreateStreamCmd = this.command.onCreateStreamCmd();
     this.sendCreateStreamCmd = this.command.sendCreateStreamCmd();
 
+    // net stream commands
+    this.onPublishCmd = this.command.onPublishCmd();
+
     // ?
     this.packetList = new Map();
     this.limitType = LIMIT_TYPE_HARD;
     this.startTimestamp = null;
     this.pingRequestTimestamp = null;
+    this.streams = 0;
 
     // net stream
     this.nowStreamId = 0;
@@ -218,6 +244,7 @@ class RTMP_SESSION {
     this.socket.on('timeout', this.onSocketTimeout.bind(this));
     this.socket.on('close', this.onSocketClose.bind(this));
     this.socket.setTimeout(TIMEOUT);
+    this.status[0] = 1;
   }
 
   stop() {
@@ -386,7 +413,7 @@ class RTMP_SESSION {
         }
         case PARSE_PAYLOAD: { // parse payload
           const size = Math.min(length - dataOffset, this.parsedPacket.header.chunkMessageHeader.plen - this.parsedPacket.bytes);
-
+          console.log(`size = ${size}`);
           // TODO: check payload size and realloc
           data.copy(this.parsedPacket.payload, this.parsedPacket.bytes, readBytes + dataOffset, readBytes + dataOffset + size);
 
@@ -401,7 +428,7 @@ class RTMP_SESSION {
 
             // clear parsedPacket
             this.bytesParsed = 0;
-            // this.parsedPacket.bytes = 0;
+            this.parsedPacket.bytes = 0;
             this.handler();
           }
           break;
@@ -667,32 +694,37 @@ class RTMP_SESSION {
     // decode payload data according to AMF
     const decodedMsg = (amf === 0) ? AMF.decodeAmf0Cmd(payload) : AMF.decodeAmf3Cmd(payload);
     const cmdName = decodedMsg.cmd;
-    const { cmdObj, transId: transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
+    // const { cmdObj, transId: transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
     console.log(decodedMsg);
 
     switch (cmdName) {
       case 'connect':
-        this.onConnectCmd.cmd = 'connect';
-        this.onConnectCmd.cmdObj = cmdObj;
-        this.onConnectCmd.cmdObj.app = cmdObj.app;
-        this.onConnectCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        this.onConnectCmd = decodedMsg;
+        // this.onConnectCmd.cmd = 'connect';
+        // this.onConnectCmd.cmdObj = cmdObj;
+        // this.onCallCmd.objectEncoding = cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         this.onConnect();
         break;
       case 'call':
-        this.onCallCmd.cmd = 'call';
-        this.onCallCmd.transId = decodedMsg.transId;
-        this.onCallCmd.cmdObj = cmdObj;
-        this.onCallCmd.cmdObj.app = cmdObj.app;
-        this.onCallCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        this.onCallCmd = decodedMsg;
+        // this.onCallCmd.cmd = 'call';
+        // this.onCallCmd.transId = decodedMsg.transId;
+        // this.onCallCmd.cmdObj = cmdObj;
+        // this.onCallCmd.objectEncoding = cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         // TODO: fill
         this.onCall();
         break;
       case 'createStream':
-        this.onCreateStreamCmd.cmd = 'createStream';
-        this.onCreateStreamCmd.cmdObj = cmdObj;
-        this.onCreateStreamCmd.cmdObj.app = cmdObj.app;
-        this.onCreateStreamCmd.cmdObj.objectEncoding = (cmdObj.objectEncoding != null) ? cmdObj.objectEncoding : 0;
+        this.onCreateStreamCmd = decodedMsg;
+        // this.onCreateStreamCmd.cmd = 'createStream';
+        // this.onCreateStreamCmd.cmdObj = cmdObj;
+        // this.onCallCmd.objectEncoding = cmdObj && cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         this.onCreateStream();
+        break;
+      case 'publish':
+        console.log('publish request');
+        this.onPublishCmd = decodedMsg;
+        this.onPublish();
         break;
       default:
         break;
@@ -702,6 +734,7 @@ class RTMP_SESSION {
   onConnect() {
     // this.sendWindowACK(4294967293); // TODO: fix (2^32-1)
     // this.setPeerBandwidth(4294967293, 2); // TODO: why dynamic limit type?
+    this.appname = this.onConnectCmd.cmdObj.app;
     this.sendWindowACK(5000000); // TODO: fix (2^32-1)
     this.sendBandWidth(5000000, LIMIT_TYPE_DYNAMIC);
     this.sendChunkSize(this.outChunkSize);
@@ -747,6 +780,9 @@ class RTMP_SESSION {
       case 'sendCreateStream':
         pkt.payload = AMF.encodeAmf0Cmd(this.sendCreateStreamCmd);
         break;
+      case 'sendPublish':
+        pkt.payload = AMF.encodeAmf0Cmd(this.sendPublishCmd);
+        break;
       default: break;
     }
     // pkt.payload = AMF.encodeAmf0Cmd();
@@ -769,6 +805,7 @@ class RTMP_SESSION {
   }
 
   onCreateStream() {
+    ++this.streams;
     this.sendCreateStream();
   }
 
@@ -776,6 +813,7 @@ class RTMP_SESSION {
     this.sendCreateStreamCmd.cmd = '_result';
     this.sendCreateStreamCmd.transId = this.onCreateStreamCmd.transId;
     this.sendCreateStreamCmd.cmdObj = null;
+    this.sendCreateStreamCmd.info = this.streams;
     this.sendCmdMsg('sendCreateStream');
   }
 
@@ -1003,14 +1041,52 @@ class RTMP_SESSION {
   append(스트림이 생성되고 데이터가 파일에 덧붙여질 떄. 붙여질 파일이 존재하지 않으면 새로 생성한다)
   *서버는 publish 시작을 마킹하기 위해 onStatus 명령어로 응답한다.
 */
-  publish(msg) {
-    if (typeof msg.streamName !== 'string') return;
+  onPublish() {
+    // if (typeof msg.streamName !== 'string') return;
+    if (typeof this.onPublishCmd.name !== 'string') return;
 
     // 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
-    this.publishStreamPath = `/${this.appname}/${msg.streamName.split('?')[0]}`;
+    this.publishStreamPath = `/${this.appname}/${this.onPublishCmd.name.split('?')[0]}`;
     this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
+    this.publishArgs = QueryString.parse(this.onPublishCmd.name.split('?')[1]);
     if (this.status[0] === 0) return;
-    // if(this.)
+
+    // 요청받은 publishStreamPath를 다른 송출자가 사용중인 경우
+    if (CURRENT_PROGRESS.publishers.has(this.publishStreamPath)) {
+      this.sendPublish('stream already publishing');
+    } else if (this.status[1]) { // 현재 세션이 이미 publishing 중인 경우
+      this.sendPublish('connection already publishing');
+    } else {
+      this.status[1] = 1; // isPublishing = true
+      CURRENT_PROGRESS.publishers.set(this.publishStreamPath, this.id);
+      this.sendPublish(`$${this.publishStreamPath} now publishing`);
+
+      // trans-server에 스트림 transmuxing 시작하라는 이벤트 전송
+      CURRENT_PROGRESS.events.emit('postPublish', this.id, this.publishStreamPath, this.publishArgs);
+    }
+  }
+
+  sendPublish(description) {
+    this.sendPublishCmd.cmd = 'onStatus';
+    this.sendPublishCmd.transId = 0;
+    this.sendPublishCmd.cmdObj = null;
+    switch (description) {
+      case 'stream already publishing':
+        this.sendPublishCmd.info.level = 'error';
+        this.sendPublishCmd.info.code = 'NetStream.Publish.BadName';
+        break;
+      case 'connection already publishing':
+        this.sendPublishCmd.info.level = 'error';
+        this.sendPublishCmd.info.code = 'NetStream.Publish.BadConnection';
+        break;
+      case `${this.publishStreamPath} now publishing`:
+        this.sendPublishCmd.info.level = 'status';
+        this.sendPublishCmd.info.code = 'NetStream.Publish.start';
+        break;
+      default: break;
+    }
+    this.sendPublishCmd.info.description = description;
+    this.sendCmdMsg('sendPublish');
   }
 
   receiveAudio(msg) {
