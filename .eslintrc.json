@@ -28,6 +28,7 @@
         "no-restricted-syntax": "off",
         "no-useless-return": "off",
         "no-param-reassign": "off",
-        "no-constant-condition": "off"
+        "no-constant-condition": "off",
+        "import/no-extraneous-dependency": "off"
     }
 }
