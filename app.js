@@ -1,3 +1,9 @@
-const run = require('./rtmp-server');
+const RtmpServer = require('./rtmp-server');
+const TransServer = require('./trans-server');
+const HttpServer = require('./bin/www');
 
-run();
+const rtmpServer = new RtmpServer();
+const transServer = new TransServer();
+
+rtmpServer.run();
+transServer.run();

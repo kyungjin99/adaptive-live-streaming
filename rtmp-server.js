@@ -3,21 +3,33 @@ const RtmpSession = require('./rtmp-session');
 
 const PORT = 1935;
 
-const server = net.createServer((socket) => {
-  socket.on('end', () => {
-    console.log('client exit');
-  });
+class RTMP_SERVER {
+  constructor() {
+    this.server = null;
+  }
 
-  const sess = new RtmpSession(socket);
-  console.log('Session created');
-  console.log('Sess run begin');
-  sess.run();
-});
+  run() {
+    const server = net.createServer((socket) => {
+      socket.on('end', () => {
+        console.log('client exit');
+      });
 
-server.on('error', (error) => {
-  throw error;
-});
+      const sess = new RtmpSession(socket);
+      console.log('Session created');
+      console.log('Sess run begin');
+      sess.run();
+    });
 
-server.listen(PORT, () => {
-  console.log(`RTMP Server is listening on port ${PORT}`);
-});
+    this.server = server;
+    server.on('error', (error) => {
+      console.log('[RTMP SERVER] error occured');
+      throw error;
+    });
+
+    server.listen(PORT, () => {
+      console.log(`RTMP Server is listening on port ${PORT}`);
+    });
+  }
+}
+
+module.exports = RTMP_SERVER;
