@@ -214,6 +214,7 @@ class RTMP_SESSION {
 
     // net stream commands
     this.onPublishCmd = this.command.onPublishCmd();
+    this.sendPublishCmd = this.command.sendPublishCmd();
 
     // ?
     this.packetList = new Map();
@@ -229,7 +230,8 @@ class RTMP_SESSION {
     this.publishStreamId = 0;
     this.publishStreamPath = '';
     this.publishArgs = {};
-    this.status = Buffer.from('0000011', 'binary'); // range 0 ~ 6
+    // this.status = Buffer.from('0000011', 'binary'); // range 0 ~ 6
+    this.status = Buffer.from('00000000000101', 'hex'); // range 0 ~ 6
     // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
     // 1(is Receiving Audio?, true) 1(is Receiving Video?, true)
 
@@ -413,7 +415,6 @@ class RTMP_SESSION {
         }
         case PARSE_PAYLOAD: { // parse payload
           const size = Math.min(length - dataOffset, this.parsedPacket.header.chunkMessageHeader.plen - this.parsedPacket.bytes);
-          console.log(`size = ${size}`);
           // TODO: check payload size and realloc
           data.copy(this.parsedPacket.payload, this.parsedPacket.bytes, readBytes + dataOffset, readBytes + dataOffset + size);
 
@@ -769,7 +770,6 @@ class RTMP_SESSION {
     pkt.header.basicHeader.csid = 3; // TODO: declare const later (channel invoke)
     pkt.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0; // TODO: why?
     pkt.header.chunkMessageHeader.msid = 0;
-    console.log(this.sendConnectCmd);
     switch (cmdName) {
       case 'sendConnect':
         pkt.payload = AMF.encodeAmf0Cmd(this.sendConnectCmd);
@@ -781,6 +781,7 @@ class RTMP_SESSION {
         pkt.payload = AMF.encodeAmf0Cmd(this.sendCreateStreamCmd);
         break;
       case 'sendPublish':
+        console.log(this.sendPublishCmd);
         pkt.payload = AMF.encodeAmf0Cmd(this.sendPublishCmd);
         break;
       default: break;
@@ -1051,6 +1052,9 @@ class RTMP_SESSION {
     this.publishArgs = QueryString.parse(this.onPublishCmd.name.split('?')[1]);
     if (this.status[0] === 0) return;
 
+    console.log(`streamPath = ${this.publishStreamPath}`);
+    console.log(`streamId = ${this.publishStreamId}`);
+
     // 요청받은 publishStreamPath를 다른 송출자가 사용중인 경우
     if (CURRENT_PROGRESS.publishers.has(this.publishStreamPath)) {
       this.sendPublish('stream already publishing');
@@ -1059,7 +1063,7 @@ class RTMP_SESSION {
     } else {
       this.status[1] = 1; // isPublishing = true
       CURRENT_PROGRESS.publishers.set(this.publishStreamPath, this.id);
-      this.sendPublish(`$${this.publishStreamPath} now publishing`);
+      this.sendPublish(`${this.publishStreamPath} now publishing`);
 
       // trans-server에 스트림 transmuxing 시작하라는 이벤트 전송
       CURRENT_PROGRESS.events.emit('postPublish', this.id, this.publishStreamPath, this.publishArgs);
@@ -1081,7 +1085,7 @@ class RTMP_SESSION {
         break;
       case `${this.publishStreamPath} now publishing`:
         this.sendPublishCmd.info.level = 'status';
-        this.sendPublishCmd.info.code = 'NetStream.Publish.start';
+        this.sendPublishCmd.info.code = 'NetStream.Publish.Start';
         break;
       default: break;
     }
