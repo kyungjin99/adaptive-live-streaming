@@ -18,20 +18,17 @@ class TRANS_SESSION extends EventEmitter {
   }
 
   run() {
+    console.log('[TRANS SESSION] run method start');
     const vc = 'copy';
     const ac = 'copy';
     const inPath = `rtmp://127.0.0.1:${this.port}${this.streamPath}`;
-    const outPath = this.streamPath;
-
-    console.log(`[TRANS SESSION] inPath = ${inPath}`);
-    console.log(`[TRANS SESSION] outPath = ${outPath}`);
+    const outPath = `.${this.streamPath}`;
 
     mkdirp.sync(outPath);
     let argv = ['-y', '-i', inPath];
-    argv = argv.concat([`-c:v ${vc}`]);
-    argv = argv.concat([`-c:a ${ac}`]);
-    argv = argv.concat(['-f', 'tee', '-map', '0:a?', '-map', '0:v?', `[hls_time=2:hls_list_size=5:hls_flags=delete_segments]${outPath}/${this.hlsName}`]);
-
+    Array.prototype.push.apply(argv, ['-c:v', vc]);
+    Array.prototype.push.apply(argv, ['-c:a', ac]);
+    Array.prototype.push.apply(argv, ['-f', 'tee', '-map', '0:a?', '-map', '0:v?', `[hls_time=2:hls_list_size=5:hls_flags=delete_segments]${outPath}/${this.hlsName}`]);
     console.log(argv);
 
     this.ffmpegProcess = spawn(this.ffmpegPath, argv);
@@ -49,18 +46,18 @@ class TRANS_SESSION extends EventEmitter {
     });
     this.ffmpegProcess.on('close', (code) => {
       this.emit('transEnd');
-      fs.readdir(outPath, (error, files) => {
-        if (error) {
-          console.log('[TRANS SESSION] Read directory error after transmuxing');
-          console.log(error);
-        } else {
-          for (const filename of files) {
-            if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
-              fs.unlinkSync(`outPath/${filename}`);
-            }
-          }
-        }
-      });
+      // fs.readdir(outPath, (error, files) => {
+      //   if (error) {
+      //     console.log('[TRANS SESSION] Read directory error after transmuxing');
+      //     console.log(error);
+      //   } else {
+      //     for (const filename of files) {
+      //       if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
+      //         fs.unlinkSync(`${outPath}/${filename}`);
+      //       }
+      //     }
+      //   }
+      // });
     });
   }
 
