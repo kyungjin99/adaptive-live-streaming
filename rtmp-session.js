@@ -1,5 +1,6 @@
 const QueryString = require('querystring');
-const AMF = require('node-amfutils');
+const AMF = require('./rtmp-amf');
+// const AMF = require('node-amfutils');
 const HANDSHAKE = require('./rtmp-handshake');
 const CURRENT_PROGRESS = require('./rtmp-center-ad');
 const GENERATOR = require('./rtmp-center-gen');
@@ -65,19 +66,11 @@ const LIMIT_TYPE_DYNAMIC = 2;
 const CSID_PROTOCOL_MESSAGE = 2;
 
 /* reserved message stream id */
-const MSID_PROTOCOL_MESSAGE = 0;
-
-const RTMP_CHUNK_TYPE_0 = 0; // 11-bytes: timestamp(3) + length(3) + stream type(1) + stream id(4)
-const RTMP_CHUNK_TYPE_1 = 1; // 7-bytes: delta(3) + length(3) + stream type(1)
-const RTMP_CHUNK_TYPE_2 = 2; // 3-bytes: delta(3)
-const RTMP_CHUNK_TYPE_3 = 3; // 0-byte
+const RTMP_CHANNEL_PROTOCOL = 2;
+const RTMP_CHANNEL_INVOKE = 3;
 const RTMP_CHANNEL_AUDIO = 4;
 const RTMP_CHANNEL_VIDEO = 5;
 const RTMP_CHANNEL_DATA = 6;
-const RTMP_TYPE_AUDIO = 8;
-const RTMP_TYPE_VIDEO = 9;
-const RTMP_TYPE_FLEX_STREAM = 15; // AMF3
-const RTMP_TYPE_DATA = 18; // AMF0
 
 const packet = {
   create: (fmt = 0, csid = 0) => {
@@ -96,6 +89,7 @@ const packet = {
       },
       payload: null,
       bytes: 0,
+      timestamp: 0,
     };
   },
 };
@@ -169,6 +163,34 @@ const cmdStructure = {
       },
     };
   },
+  onPlayCmd: () => {
+    return {
+      cmd: 'publish',
+      transId: null,
+      cmdObj: null,
+      name: null,
+      type: null,
+    };
+  },
+  sendPlayCmd: () => {
+    return {
+      cmd: 'onStatus',
+      transId: 0,
+      cmdObj: null,
+      info: {
+        leve: null,
+        code: null,
+        description: null,
+      },
+    };
+  },
+  sendSampleAccessCmd: () => {
+    return {
+      cmd: '|RtmpSampleAccess',
+      bool1: false,
+      bool2: false,
+    };
+  },
 };
 
 class RTMP_SESSION {
@@ -215,6 +237,9 @@ class RTMP_SESSION {
     // net stream commands
     this.onPublishCmd = this.command.onPublishCmd();
     this.sendPublishCmd = this.command.sendPublishCmd();
+    this.onPlayCmd = this.command.onPlayCmd();
+    this.sendPlayCmd = this.command.sendPlayCmd();
+    this.sendSampleAccessCmd = this.command.sendSampleAccessCmd();
 
     // ?
     this.packetList = new Map();
@@ -230,6 +255,9 @@ class RTMP_SESSION {
     this.publishStreamId = 0;
     this.publishStreamPath = '';
     this.publishArgs = {};
+    this.playStreamId = 0;
+    this.playStreamPath = '';
+    this.playArgs = {};
     // this.status = Buffer.from('0000011', 'binary'); // range 0 ~ 6
     this.status = Buffer.from('00000000000101', 'hex'); // range 0 ~ 6
     // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
@@ -238,6 +266,25 @@ class RTMP_SESSION {
     // TODO: flv에 쓰이는 변수들..? 확인 필요
     this.players = new Set();
     CURRENT_PROGRESS.sessions.set(this.id, this);
+
+    // about video, audio
+    this.metaData = null;
+
+    this.audioCodec = 0;
+    this.audioSamplerate = null;
+    this.audioChannels = null;
+    this.audioCodecName = null;
+    this.aacSequenceHeader = null;
+    this.audioProfileName = null;
+    this.videoWidth = null;
+    this.videoHeight = null;
+    this.videoFps = null;
+    this.videoCodec = 0;
+    this.videoCodecName = null;
+    this.videoProfileName = null;
+    this.videoLevel = null;
+
+    this.piledAVDataNum = 0;
   }
 
   run() {
@@ -247,6 +294,7 @@ class RTMP_SESSION {
     this.socket.on('close', this.onSocketClose.bind(this));
     this.socket.setTimeout(TIMEOUT);
     this.status[0] = 1;
+    console.log(`[RTMP SESSION] Session created. id = ${this.id}`);
   }
 
   stop() {
@@ -327,6 +375,8 @@ class RTMP_SESSION {
     let dataOffset = 0; // current offset of a chunk data received
     length -= readBytes;
 
+    let extendedTimestamp;
+
     while (dataOffset < length) { // until finishing reading chunk
       switch (this.parsingState) {
         case PARSE_INIT: { // to parse a chunk basic header, you need to know how big it is
@@ -395,16 +445,27 @@ class RTMP_SESSION {
           if (this.parsedPacket.header.chunkMessageHeader.timestamp === 0xFFFFFF) { // read from chunk
             this.useExtendedTimestamp = 4;
             endpoint += 4;
-            while (this.bytesParsed < endpoint && dataOffset < length) {
-              this.parsedChunkBuf[this.bytesParsed] = data[readBytes + dataOffset]; // reading extended timestamp
-              this.bytesParsed += 1;
-              dataOffset += 1;
+          }
+          while (this.bytesParsed < endpoint && dataOffset < length) {
+            this.parsedChunkBuf[this.bytesParsed] = data[readBytes + dataOffset]; // reading extended timestamp
+            this.bytesParsed += 1;
+            dataOffset += 1;
+          }
+          if (this.bytesParsed >= endpoint) {
+            if (this.parsedPacket.header.chunkMessageHeader.timestamp === 0xFFFFFF) {
+              extendedTimestamp = this.parsedChunkBuf.readUInt32BE(endpoint - 4);
+            } else {
+              extendedTimestamp = this.parsedPacket.header.chunkMessageHeader.timestamp;
             }
-            if (this.bytesParsed >= endpoint) {
-              this.parsedPacket.header.chunkMessageHeader.timestamp = this.parsedChunkBuf.readUInt32BE(endpoint - 4);
+
+            if (this.parsedPacket.bytes === 0) {
+              if (this.parsedPacket.header.fmt === CHUNK_TYPE_0) {
+                this.parsedPacket.timestamp = extendedTimestamp;
+              } else {
+                this.parsedPacket.timestamp += extendedTimestamp;
+              }
             }
           }
-
           // payload parsing 준비
           if (!this.parsedPacket.payload) {
             this.parsedPacket.payload = Buffer.alloc(this.chunkSize);
@@ -414,7 +475,8 @@ class RTMP_SESSION {
           break;
         }
         case PARSE_PAYLOAD: { // parse payload
-          const size = Math.min(length - dataOffset, this.parsedPacket.header.chunkMessageHeader.plen - this.parsedPacket.bytes);
+          let size = Math.min(this.chunkSize - (this.parsedPacket.bytes % this.chunkSize), this.parsedPacket.header.chunkMessageHeader.plen - this.parsedPacket.bytes);
+          size = Math.min(size, length - dataOffset);
           // TODO: check payload size and realloc
           data.copy(this.parsedPacket.payload, this.parsedPacket.bytes, readBytes + dataOffset, readBytes + dataOffset + size);
 
@@ -431,6 +493,8 @@ class RTMP_SESSION {
             this.bytesParsed = 0;
             this.parsedPacket.bytes = 0;
             this.handler();
+          } else if (this.parsedPacket.bytes % this.chunkSize === 0) {
+            this.parsingState = PARSE_INIT;
           }
           break;
         }
@@ -475,6 +539,7 @@ class RTMP_SESSION {
   parseChunkMessageHeader() {
     const { fmt } = this.parsedPacket.header.basicHeader; // chunk type
     let offset = this.bheaderSize;
+    this.mheaderSize = 0;
 
     // read timestamp (delta) field except for type3 chunks
     if (fmt < CHUNK_TYPE_3) {
@@ -610,11 +675,11 @@ class RTMP_SESSION {
       extendedTimestampBuf.copy(buf, bufOffset, 0, extendedTimestampBuf.length);
       bufOffset += extendedTimestampBuf.length;
     }
-    if (payloadSize > this.outChunkSize) { // write payload
+    if (payloadSize >= this.outChunkSize) { // write payload
       payload.copy(buf, bufOffset, 0, this.outChunkSize);
       // buf.write(payload, bufOffset, this.chunkSize); // write payload up to max chunk size
-      payloadOffset += this.chunkSize;
-      bufOffset += this.chunkSize;
+      payloadOffset += this.outChunkSize;
+      bufOffset += this.outChunkSize;
     } else {
       // buf.write(payload, bufOffset, payloadSize); // write the whole payload if possible
       payload.copy(buf, bufOffset, 0, payloadSize);
@@ -622,7 +687,7 @@ class RTMP_SESSION {
 
     if (numOfChunks > 1) { // create type 3 chunks
       const { csid } = header.basicHeader;
-      const t3bheader = this.createChunkBasicHeader(packet.create(3, csid).header);
+      const t3bheader = this.createChunkBasicHeader(packet.create(3, csid).header.basicHeader);
       for (let i = 1; i < numOfChunks; i += 1) {
         // write chunk type 3 header (create only basic header)
         t3bheader.copy(buf, bufOffset, 0, t3bheader.length);
@@ -633,9 +698,9 @@ class RTMP_SESSION {
           bufOffset += 4;
         }
         // write partial payloads
-        if (payloadSize - payloadOffset > 0) { // partial payload size < chunk size
+        if (payloadSize - payloadOffset >= this.outChunkSize) { // partial payload size >= chunk size
           payload.copy(buf, bufOffset, payloadOffset, payloadOffset + this.outChunkSize);
-        } else { // partial payload size >= chunk size
+        } else if (payloadSize - payloadOffset > 0) { // partial payload size < chunk size
           payload.copy(buf, bufOffset, payloadOffset, payloadSize);
         }
         payloadOffset += this.outChunkSize;
@@ -647,7 +712,8 @@ class RTMP_SESSION {
 
   handler() {
     const { mtid } = this.parsedPacket.header.chunkMessageHeader;
-    const { payload } = this.parsedPacket;
+    let { payload } = this.parsedPacket;
+    payload = payload.slice(0, this.parsedPacket.header.chunkMessageHeader.plen);
     switch (mtid) {
       // protocol control message
       case SET_CHUNK_SIZE:
@@ -686,46 +752,54 @@ class RTMP_SESSION {
       case COMMAND_MESSAGE_AMF3:
         this.parseCmdMsg(mtid, payload);
         break;
+      case DATA_MESSAGE_AMF0:
+      case DATA_MESSAGE_AMF3:
+        this.dataHandler(mtid, payload);
+        break;
+      case AUDIO_MESSAGE:
+        this.audioHandler(payload);
+        break;
+      case VIDEO_MESSAGE:
+        this.videoHandler(payload);
+        break;
       default: break;
     }
   }
 
   parseCmdMsg(amfType, payload) {
+    console.log(`payload size = ${payload.length}`);
+    console.log(payload);
     const amf = (amfType === COMMAND_MESSAGE_AMF0) ? 0 : 3;
+    const offset = (amf === 0) ? 0 : 1;
+    payload = payload.slice(offset, this.parsedPacket.header.chunkMessageHeader.plen);
     // decode payload data according to AMF
     const decodedMsg = (amf === 0) ? AMF.decodeAmf0Cmd(payload) : AMF.decodeAmf3Cmd(payload);
     const cmdName = decodedMsg.cmd;
-    // const { cmdObj, transId: transactionId } = decodedMsg; // transactionId랑 commandObject는 무조건 있음. 그래서 따로 빼도 됨
     console.log(decodedMsg);
 
     switch (cmdName) {
       case 'connect':
         this.onConnectCmd = decodedMsg;
-        // this.onConnectCmd.cmd = 'connect';
-        // this.onConnectCmd.cmdObj = cmdObj;
-        // this.onCallCmd.objectEncoding = cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         this.onConnect();
         break;
       case 'call':
         this.onCallCmd = decodedMsg;
-        // this.onCallCmd.cmd = 'call';
-        // this.onCallCmd.transId = decodedMsg.transId;
-        // this.onCallCmd.cmdObj = cmdObj;
-        // this.onCallCmd.objectEncoding = cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         // TODO: fill
         this.onCall();
         break;
       case 'createStream':
         this.onCreateStreamCmd = decodedMsg;
-        // this.onCreateStreamCmd.cmd = 'createStream';
-        // this.onCreateStreamCmd.cmdObj = cmdObj;
-        // this.onCallCmd.objectEncoding = cmdObj && cmdObj.objectEncoding ? cmdObj.objectEncoding : 0;
         this.onCreateStream();
         break;
       case 'publish':
-        console.log('publish request');
         this.onPublishCmd = decodedMsg;
         this.onPublish();
+        break;
+      case 'play':
+        this.onPlayCmd = decodedMsg;
+        this.onPlay();
+        break;
+      case 'getStreamLength':
         break;
       default:
         break;
@@ -736,6 +810,7 @@ class RTMP_SESSION {
     // this.sendWindowACK(4294967293); // TODO: fix (2^32-1)
     // this.setPeerBandwidth(4294967293, 2); // TODO: why dynamic limit type?
     this.appname = this.onConnectCmd.cmdObj.app;
+    this.status[3] = 1; // isIdling = true
     this.sendWindowACK(5000000); // TODO: fix (2^32-1)
     this.sendBandWidth(5000000, LIMIT_TYPE_DYNAMIC);
     this.sendChunkSize(this.outChunkSize);
@@ -747,7 +822,7 @@ class RTMP_SESSION {
 
   sendConnect() {
     this.sendConnectCmd.cmd = '_result';
-    this.sendConnectCmd.transId = 1;
+    this.sendConnectCmd.transId = this.onConnectCmd.transId;
     this.sendConnectCmd.cmdObj = {
       // fmsVer
       // objectEncoding?
@@ -758,18 +833,18 @@ class RTMP_SESSION {
       level: 'status',
       code: 'NetConnection.Connect.Success',
       description: 'Connection succeeded',
-      objectEncoding: this.onConnectCmd.cmdObj.objectEncoding,
+      objectEncoding: this.onConnectCmd.cmdObj.objectEncoding ? this.onConnectCmd.cmdObj.objectEncoding : 0,
     };
     // send message to client
-    this.sendCmdMsg('sendConnect');
+    this.sendCmdMsg(0, 'sendConnect');
   }
 
-  sendCmdMsg(cmdName) { // packetise command msg (response) and then chunk it to send to client
+  sendCmdMsg(msid, cmdName) { // packetise command msg (response) and then chunk it to send to client
     const pkt = packet.create();
     pkt.header.basicHeader.fmt = CHUNK_TYPE_0;
-    pkt.header.basicHeader.csid = 3; // TODO: declare const later (channel invoke)
+    pkt.header.basicHeader.csid = RTMP_CHANNEL_INVOKE; // TODO: declare const later (channel invoke)
     pkt.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0; // TODO: why?
-    pkt.header.chunkMessageHeader.msid = 0;
+    pkt.header.chunkMessageHeader.msid = msid;
     switch (cmdName) {
       case 'sendConnect':
         pkt.payload = AMF.encodeAmf0Cmd(this.sendConnectCmd);
@@ -781,8 +856,11 @@ class RTMP_SESSION {
         pkt.payload = AMF.encodeAmf0Cmd(this.sendCreateStreamCmd);
         break;
       case 'sendPublish':
-        console.log(this.sendPublishCmd);
         pkt.payload = AMF.encodeAmf0Cmd(this.sendPublishCmd);
+        break;
+      case 'sendPlayReset':
+      case 'sendPlayStart':
+        pkt.payload = AMF.encodeAmf0Cmd(this.sendPlayCmd);
         break;
       default: break;
     }
@@ -806,6 +884,7 @@ class RTMP_SESSION {
   }
 
   onCreateStream() {
+    console.log('create stream on!');
     ++this.streams;
     this.sendCreateStream();
   }
@@ -815,7 +894,7 @@ class RTMP_SESSION {
     this.sendCreateStreamCmd.transId = this.onCreateStreamCmd.transId;
     this.sendCreateStreamCmd.cmdObj = null;
     this.sendCreateStreamCmd.info = this.streams;
-    this.sendCmdMsg('sendCreateStream');
+    this.sendCmdMsg(0, 'sendCreateStream');
   }
 
   pcmHandler(mtid, payload) {
@@ -963,26 +1042,18 @@ class RTMP_SESSION {
   }
 
   // 서버가 클라이언트로 전송하는 UCM 메서드
-  streamBegin(csid) {
-    const newPacket = packet.create();
-    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
-    newPacket.header.basicHeader.csid = CSID_PROTOCOL_MESSAGE;
-    newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
-    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
-    newPacket.payload = Buffer.from([0, UCM_PING_RESPONSE, (csid >> 24) & 0xff, (csid >> 16) & 0xff, (csid >> 8) & 0xff, csid & 0xff]);
-    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
-
-    this.socket.write(this.createChunks(newPacket));
+  streamBegin(msid) {
+    this.sendStreamStatus(UCM_STREAM_BEGIN, msid);
   }
 
   // 녹화가 실행되고 있는 cid를 클라이언트에 전송
-  streamIsRecorded(csid) {
+  streamIsRecorded(msid) {
     const newPacket = packet.create();
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
     newPacket.header.basicHeader.csid = CSID_PROTOCOL_MESSAGE;
     newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
-    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
-    newPacket.payload = Buffer.from([0, UCM_STREAM_IS_RECORDED, (csid >> 24) & 0xff, (csid >> 16) & 0xff, (csid >> 8) & 0xff, csid & 0xff]);
+    newPacket.header.chunkMessageHeader.msid = RTMP_CHANNEL_PROTOCOL;
+    newPacket.payload = Buffer.from([0, UCM_STREAM_IS_RECORDED, (msid >> 24) & 0xff, (msid >> 16) & 0xff, (msid >> 8) & 0xff, msid & 0xff]);
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
 
     this.socket.write(this.createChunks(newPacket));
@@ -994,7 +1065,7 @@ class RTMP_SESSION {
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
     newPacket.header.basicHeader.csid = CSID_PROTOCOL_MESSAGE;
     newPacket.header.chunkMessageHeader.mtid = USER_CONTROL_MESSAGE;
-    newPacket.header.chunkMessageHeader.msid = MSID_PROTOCOL_MESSAGE;
+    newPacket.header.chunkMessageHeader.msid = RTMP_CHANNEL_PROTOCOL;
     newPacket.payload = Buffer.from([0, UCM_PING_REQUEST, (timestampDelta >> 24) & 0xff, (timestampDelta >> 16) & 0xff, (timestampDelta >> 8) & 0xff, timestampDelta & 0xff]);
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
 
@@ -1010,6 +1081,13 @@ class RTMP_SESSION {
     const timestamp = payload.readUInt32BE();
     if (this.pingRequestTimestamp !== timestamp) this.stop();
     else this.pingRequestTimestamp = null;
+  }
+
+  sendStreamStatus(st, id) {
+    let buf = Buffer.from('020000000000060400000000000000000000', 'hex');
+    buf.writeUInt16BE(st, 12);
+    buf.writeUInt32BE(id, 14);
+    this.socket.write(buf);
   }
 
   // streamEOF(cid) { // playback할 데이터가 없음을 알려주는 메서드. 필요없을듯?
@@ -1044,16 +1122,13 @@ class RTMP_SESSION {
 */
   onPublish() {
     // if (typeof msg.streamName !== 'string') return;
-    if (typeof this.onPublishCmd.name !== 'string') return;
+    if (typeof this.onPublishCmd.streamName !== 'string') return;
 
     // 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
-    this.publishStreamPath = `/${this.appname}/${this.onPublishCmd.name.split('?')[0]}`;
+    this.publishStreamPath = `/${this.appname}/${this.onPublishCmd.streamName.split('?')[0]}`;
     this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
-    this.publishArgs = QueryString.parse(this.onPublishCmd.name.split('?')[1]);
+    this.publishArgs = QueryString.parse(this.onPublishCmd.streamName.split('?')[1]);
     if (this.status[0] === 0) return;
-
-    console.log(`streamPath = ${this.publishStreamPath}`);
-    console.log(`streamId = ${this.publishStreamId}`);
 
     // 요청받은 publishStreamPath를 다른 송출자가 사용중인 경우
     if (CURRENT_PROGRESS.publishers.has(this.publishStreamPath)) {
@@ -1064,6 +1139,14 @@ class RTMP_SESSION {
       this.status[1] = 1; // isPublishing = true
       CURRENT_PROGRESS.publishers.set(this.publishStreamPath, this.id);
       this.sendPublish(`${this.publishStreamPath} now publishing`);
+
+      for (const idlePlayerId of CURRENT_PROGRESS.idlePlayers) {
+        const idlePlayerSession = CURRENT_PROGRESS.idlePlayers.get(idlePlayerId);
+        if (idlePlayerSession && idlePlayerSession.playStreamPath === this.publishStreamPath) {
+          idlePlayerSession.startPlay();
+          CURRENT_PROGRESS.idlePlayers.delete(idlePlayerId);
+        }
+      }
 
       // trans-server에 스트림 transmuxing 시작하라는 이벤트 전송
       CURRENT_PROGRESS.events.emit('postPublish', this.id, this.publishStreamPath, this.publishArgs);
@@ -1090,7 +1173,138 @@ class RTMP_SESSION {
       default: break;
     }
     this.sendPublishCmd.info.description = description;
-    this.sendCmdMsg('sendPublish');
+    this.sendCmdMsg(this.publishStreamId, 'sendPublish');
+  }
+
+  onPlay() {
+    if (typeof this.onPlayCmd.streamName !== 'string') {
+      return;
+    }
+
+    // 이 스트림이 starting 상태가 아닌 경우
+    if (!this.status[0]) {
+      return;
+    }
+
+    this.playStreamPath = `/${this.appname}/${this.onPlayCmd.streamName.split('?')[0]}`;
+    this.playStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
+    this.playArgs = QueryString.parse(this.onPlayCmd.streamName.split('?')[1]);
+
+    console.log(`[on play] playstreampath = ${this.playStreamPath}`);
+    console.log(`[on play] playstreamid = ${this.playStreamId}`);
+    console.log(`[on play] playstreamargs = ${this.playStreamArgs}`);
+
+    // 이 스트림이 play중인 경우 (play 요청이 중복된 경우)
+    if (this.status[2]) {
+      console.log(`[RTMP SESSION] id=${this.id}. Connection already playing`);
+      this.sendPlay('Connection already playing');
+    } else {
+      this.sendPlay(`${this.playStreamPath} now playing`);
+    }
+
+    if (CURRENT_PROGRESS.publishers.has(this.playStreamPath)) {
+      this.startPlay();
+    } else {
+      // TODO: 아직 방송하지 않은 스트림 경로로 play요청이 들어온 경우
+      this.status[3] = 1;
+      CURRENT_PROGRESS.idlePlayers.add(this.id);
+    }
+  }
+
+  startPlay() {
+    const publisherSessionId = CURRENT_PROGRESS.publishers.get(this.playStreamPath);
+    const publisherSession = CURRENT_PROGRESS.sessions.get(publisherSessionId);
+    publisherSession.players.add(this.id);
+    console.log(`[startPlay] Add ${this.id} to publisher ${publisherSessionId}`);
+    console.log(`[startPlay] ${publisherSessionId} 's players list`);
+    console.log(publisherSession.players);
+
+    // metadata를 이 세션에 참여중인 시청자에게 전송
+    if (publisherSession.metaData !== null) {
+      const newPacket = packet.create();
+      newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+      newPacket.header.basicHeader.csid = RTMP_CHANNEL_DATA;
+      newPacket.payload = publisherSession.metaData;
+      newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+      newPacket.header.chunkMessageHeader.msid = this.playStreamId;
+      newPacket.header.chunkMessageHeader.mtid = DATA_MESSAGE_AMF0;
+      const chunks = this.createChunks(newPacket);
+      this.socket.write(chunks);
+    }
+
+    if (publisherSession.audioCodec === 10) {
+      const newPacket = packet.create();
+      newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+      newPacket.header.basicHeader.csid = RTMP_CHANNEL_AUDIO;
+      newPacket.payload = publisherSession.aacSequenceHeader;
+      newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+      newPacket.header.chunkMessageHeader.msid = this.playStreamId;
+      newPacket.header.chunkMessageHeader.mtid = AUDIO_MESSAGE;
+      const chunks = this.createChunks(newPacket);
+      console.log(`[startPlay] Send audio header to ${this.id}`);
+      this.socket.write(chunks);
+    }
+
+    if (publisherSession.videoCodec === 7 || publisherSession.videoCodec === 12) {
+      const newPacket = packet.create();
+      newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+      newPacket.header.basicHeader.csid = RTMP_CHANNEL_VIDEO;
+      newPacket.payload = publisherSession.avcSequenceHeader;
+      newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+      newPacket.header.chunkMessageHeader.msid = this.playStreamId;
+      newPacket.header.chunkMessageHeader.mtid = VIDEO_MESSAGE;
+      const chunks = this.createChunks(newPacket);
+      console.log(`[startPlay] Send video header to ${this.id}`);
+      this.socket.write(chunks);
+    }
+
+    this.status[2] = 1; // isPlaying = true
+    this.status[3] = 0; // isIdling = false
+  }
+
+  sendPlay(description) {
+    this.sendPlayCmd.cmd = 'onStatus';
+    this.sendPlayCmd.transId = 0;
+    this.sendPlayCmd.cmdObj = null;
+    switch (description) {
+      case 'Connection already playing':
+        this.sendPlayCmd.info.level = 'error';
+        this.sendPlayCmd.info.code = 'Netstream.Play.BadConnection';
+        this.sendPlayCmd.info.description = description;
+        this.sendCmdMsg(this.playStreamId, 'sendPlay');
+        break;
+      case `${this.playStreamPath} now playing`:
+        this.sendPlayCmd.info.level = 'status';
+
+        // send streambegin command message
+        this.streamBegin(this.playStreamId);
+
+        // send play-reset command message
+        this.sendPlayCmd.info.code = 'Netstream.Play.Reset';
+        this.sendPlayCmd.info.description = 'Playing and resetting stream';
+        this.sendCmdMsg(this.playStreamId, 'sendPlayReset');
+
+        // send play-start command message
+        this.sendPlayCmd.info.code = 'Netstream.Play.Start';
+        this.sendPlayCmd.info.description = 'Start playing stream';
+        this.sendCmdMsg(this.playStreamId, 'sendPlayStart');
+
+        this.sendSampleAccess(this.playStreamId);
+        break;
+      default: break;
+    }
+  }
+
+  sendSampleAccess(msid) {
+    let newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.csid = RTMP_CHANNEL_DATA;
+    newPacket.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0;
+    newPacket.payload = AMF.encodeAmf0Data(this.sendSampleAccessCmd);
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+    newPacket.header.chunkMessageHeader.msid = msid;
+    const chunks = this.createChunks(newPacket);
+    this.socket.write(chunks);
   }
 
   receiveAudio(msg) {
@@ -1160,29 +1374,33 @@ class RTMP_SESSION {
   }
 
   /* about audio, video */
-  audioHandler() {
-    const payload = this.parsePacket.payload.slice(0, this.parsePacket.payload.length); // (!)header.length
+  audioHandler(payload) {
+    // payload = payload.slice(0, payload.length); // (!)header.length
+    // payload = payload.slice(0, this.parsedPacket.header.chunkMessageHeader.plen);
     const soundFormat = (payload[0] >> 4) & 0x0f;
     const soundRate = (payload[0] >> 2) & 0x03;
-    const soundSize = (payload[0] >> 1) & 0x1;
+    const soundSize = (payload[0] >> 1) & 0x01;
     let soundType = (payload[0]) & 0x01;
 
     // (!)check if first audio received
-    if (this.soundFormat === 0) {
-      this.audioCodecName = AudioCodecName[soundFormat];
-      this.audioSampleRate = AudioSoundRate[soundRate];
+    if (this.audioCodec === 0) {
+      this.audioCodec = soundFormat;
+      this.audioCodecName = AUDIO_CODEC_NAME[soundFormat];
+      this.audioSampleRate = AUDIO_SOUND_RATE[soundRate];
       soundType += 1;
       this.audioChannels = soundType; // necessary?
-    }
 
-    if (soundFormat === 4) { // Nellymoser 16k-Hz mono
-      this.audioSampleRate = 16000;
-    } else if (soundFormat === 5) { // Nellymoser 8k-Hz mono
-      this.audioSampleRate = 8000;
-    } else if (soundFormat === 11) { // Speex
-      this.audioSampleRate = 16000;
-    } else if (soundFormat === 14) { // MP3 8-kHz
-      this.audioSampleRate = 8000;
+      if (soundFormat === 4) { // Nellymoser 16k-Hz mono
+        this.audioSampleRate = 16000;
+      } else if (soundFormat === 5) { // Nellymoser 8k-Hz mono
+        this.audioSampleRate = 8000;
+      } else if (soundFormat === 11) { // Speex
+        this.audioSampleRate = 16000;
+      } else if (soundFormat === 14) { // MP3 8-kHz
+        this.audioSampleRate = 8000;
+      }
+
+      console.log(`[audio handler] audioCodec = ${this.audioCodec}, audioCodecName = ${this.audioCodecName}, audioSampleRate = ${this.audioSampleRate}, audioChannels = ${this.audioChannels}`);
     }
 
     // if not AAC, print info
@@ -1191,78 +1409,130 @@ class RTMP_SESSION {
     // 0 : AACSequenceHeader, 1 : AAC raw
     // if AACPacketType == 0, AudioSpecificConfig
     // else if AACPacketType == 1, Raw AAC fream data
-    if (soundFormat === 10 & payload[1] === 0) {
+    if (soundFormat === 10 && payload[1] === 0) {
       this.aacSequenceHeader = Buffer.alloc(payload.length);
       payload.copy(this.aacSequenceHeader);
-      const aacInfo = AV.readAacHeader(this.aacSequenceHeader);
-      this.audioProfileName = aacInfo.profileName;
-      this.audioSampleRate = aacInfo.sampleFrequency;
-      this.audioChannels = aacInfo.channelNumber;
-
+      const aacInfo = AV.readAACSpecificConfig(this.aacSequenceHeader);
+      this.audioProfileName = AV.getAACProfileName(aacInfo);
+      this.audioSampleRate = aacInfo.sample_rate;
+      this.audioChannels = aacInfo.channels;
       // if AAC, print info
     }
 
-    // repackaging
-    const packet = RtmpPacket.create();
-    packet.header.fmt = RTMP_CHUNK_TYPE_0;
-    packet.header.cid = RTMP_CHANNEL_AUDIO;
-    packet.header.type = RTMP_TYPE_AUDIO;
-    packet.payload = payload; // payload of received parsePacket
+    // // repackaging
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.csid = RTMP_CHANNEL_AUDIO;
+    newPacket.header.chunkMessageHeader.mtid = AUDIO_MESSAGE;
+    newPacket.payload = payload; // payload of received parsePacket
     // packet.payload.length = packet.payload.length; // (!)header.length // TODO: no-self-assign eslint 오류. 수정 요망
-    packet.payload.length = payload.length;
-    packet.header.timestamp = this.parsePacket.clock;
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+    newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
+    const chunks = this.createChunks(newPacket);
 
-    const rtmpChunks = this.createChunks(packet);
+    for (const playerId of this.players) {
+      const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
+
+      if (playerSession.piledAVDataNum === 0) {
+        playerSession.socket.cork();
+      }
+
+      // 시청자가 isStarting, isPlaying, !isPausing 만족 시
+      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
+        chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
+        playerSession.socket.write(chunks);
+      }
+
+      ++playerSession.piledAVDataNum;
+
+      if (playerSession.piledAVDataNum === 10) {
+        process.nextTick(() => playerSession.socket.uncork());
+        playerSession.piledAVDataNum = 0;
+      }
+    }
 
     // (!)player session buffer cork()
   }
 
-  videoHandler() {
-    const payload = this.parserPacket.payload.slice(0, this.parserPacket.payload.length); // (!)header.length
+  videoHandler(payload) {
+    // payload = payload.slice(0, payload.length); // (!)header.length
+    // payload = payload.slice(0, this.parsedPacket.header.chunkMessageHeader.plen);
     const frameType = (payload[0] >> 4) & 0x0f;
     const codecId = payload[0] & 0x0f;
 
     // AVC(H.264)
     // (!) codecID === 12, HEVC(H.265)
     if (codecId === 7) {
-      this.avcSequenceHeader = Buffer.alloc(payload.length);
-      payload.copy(this.avcSequenceHeader);
-      const info = AV.rCeadAVSHeader(this.avcSequenceHeader);
-      this.videoWidth = info.width;
-      this.videoHeight = info.height;
-      this.videoProfileName = info.profileName;
-      this.videoLevel = info.level;
+      if (frameType === 1 && payload[1] === 0) {
+        this.avcSequenceHeader = Buffer.alloc(payload.length);
+        payload.copy(this.avcSequenceHeader);
+        const avcInfo = AV.readAVCSpecificConfig(this.avcSequenceHeader);
+        this.videoWidth = avcInfo.width;
+        this.videoHeight = avcInfo.height;
+        this.videoProfileName = AV.getAVCProfileName(avcInfo);
+        this.videoLevel = avcInfo.level;
+      }
     }
 
     // if this is first arrival
     if (this.videoCodec === 0) {
       this.videoCodec = codecId;
       this.videoCodecName = VIDEO_CODEC_NAME[codecId];
-
       // print vidoe info
     }
 
     // repackaging
-    const packet = RtmpPacket.create();
-    packet.header.fmt = RTMP_CHUNK_TYPE_0;
-    packet.header.cid = RTMP_CHANNEL_VIDEO;
-    packet.header.type = RTMP_TYPE_VIDEO;
-    packet.payload = payload;
-    packet.header.length = packet.payload.length;
-    packet.header.timestamp = this.parserPacket.clock;
-    const rtmpChunks = this.createChunks(packet);
-    const flvTag = NodeFlvSession.createFlvTag(packet);
+    // const packet = this.packet.create();
+    // packet.header.fmt = RTMP_CHUNK_TYPE_0;
+    // packet.header.cid = RTMP_CHANNEL_VIDEO;
+    // packet.header.type = RTMP_TYPE_VIDEO;
+    // packet.payload = payload;
+    // packet.header.length = packet.payload.length;
+    // packet.header.timestamp = this.parserPacket.clock;
+    // const rtmpChunks = this.createChunks(packet);
+    // const flvTag = NodeFlvSession.createFlvTag(packet);
+
+    const newPacket = packet.create();
+    newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+    newPacket.header.basicHeader.csid = RTMP_CHANNEL_VIDEO;
+    newPacket.header.chunkMessageHeader.mtid = VIDEO_MESSAGE;
+    newPacket.payload = payload; // payload of received parsePacket
+    newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+    newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
+    const chunks = this.createChunks(newPacket);
+
+    for (const playerId of this.players) {
+      const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
+
+      if (playerSession.piledAVDataNum === 0) {
+        playerSession.socket.cork();
+      }
+
+      // 시청자가 isStarting, isPlaying, !isPausing 만족 시
+      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
+        chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
+        playerSession.socket.write(chunks);
+      }
+
+      ++playerSession.piledAVDataNum;
+
+      if (playerSession.piledAVDataNum === 10) {
+        process.nextTick(() => playerSession.socket.uncork());
+        playerSession.piledAVDataNum = 0;
+      }
+    }
 
     // (!)session? address?
   }
 
-  dataHandler() {
-    const offset = this.parserPacket.header.type === RTMP_TYPE_FLEX_STREAM ? 1 : 0;
-    const payload = this.parserPacket.payload.slice(offset, this.parserPacket.header.length);
+  dataHandler(mtid, payload) {
+    const offset = mtid === DATA_MESSAGE_AMF3 ? 1 : 0;
+    payload = payload.slice(offset, this.parsedPacket.header.chunkMessageHeader.plen);
     const dataMessage = AMF.decodeAmf0Data(payload);
     switch (dataMessage.cmd) {
       case '@setDataFrame': {
         if (dataMessage.dataObj) {
+          console.log(dataMessage);
           this.audioSamplerate = dataMessage.dataObj.audiosamplerate;
           this.audioChannels = dataMessage.dataObj.stereo ? 2 : 1;
           this.videoWidth = dataMessage.dataObj.width;
@@ -1275,17 +1545,42 @@ class RTMP_SESSION {
           dataObj: dataMessage.dataObj,
         };
         this.metaData = AMF.encodeAmf0Data(opt);
+        console.log(this.metaData);
 
-        const packet = RtmpPacket.create();
-        packet.header.fmt = RTMP_CHUNK_TYPE_0;
-        packet.header.cid = RTMP_CHANNEL_DATA;
-        packet.header.type = RTMP_TYPE_DATA;
-        packet.payload = this.metaData;
-        packet.header.length = packet.payload.length;
-        const rtmpChunks = this.createChunks(packet);
+        // const packet = this.packet.create();
+        // packet.header.fmt = RTMP_CHUNK_TYPE_0;
+        // packet.header.cid = RTMP_CHANNEL_DATA;
+        // packet.header.type = RTMP_TYPE_DATA;
+        // packet.payload = this.metaData;
+        // packet.header.length = packet.payload.length;
+        // const rtmpChunks = this.createChunks(packet);
+
+        const newPacket = packet.create();
+        newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
+        newPacket.header.basicHeader.csid = RTMP_CHANNEL_DATA;
+        newPacket.header.chunkMessageHeader.mtid = DATA_MESSAGE_AMF0;
+        newPacket.payload = this.metaData;
+        newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
+        newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
+        console.log('[data handler] new packet');
+        console.log(newPacket);
+        const chunks = this.createChunks(newPacket);
+
+        for (const playerId of this.players) {
+          const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
+
+          // 시청자가 isStarting, isPlaying, !isPausing 만족 시
+          if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
+            console.log(`[setDataFrame] sending metadata to viewer ${playerId}`);
+            console.log(chunks);
+            chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
+            playerSession.socket.write(chunks);
+          }
+        }
+
         break;
       }
-      default:
+      default: break;
     }
   }
 }

@@ -15,8 +15,6 @@ class RTMP_SERVER {
       });
 
       const sess = new RtmpSession(socket);
-      console.log('Session created');
-      console.log('Sess run begin');
       sess.run();
     });
 
