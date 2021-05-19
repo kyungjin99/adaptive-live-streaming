@@ -4,7 +4,7 @@ const TransSession = require('./trans-session');
 const CURRENT_PROGRESS = require('./rtmp-center-ad');
 
 // 서버 내의 ffmpeg 경로. 테스트 하고 싶다면 자신의 경로에 맞게 수정 필요.
-const FFMPEG_PATH = 'C:/ffmpeg/bin/ffmpeg.exe';
+const FFMPEG_PATH = 'C:/Program Files/ffmpeg/bin/ffmpeg.exe';
 const PORT = 1935;
 const RESOLUTIONS = ['1080p', '720p', '480p'];
 
