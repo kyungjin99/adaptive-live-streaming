@@ -200,7 +200,6 @@ class RTMP_SESSION {
     this.handshakeState = HANDSHAKE_UNINIT;
     this.handshakeBytes = 0;
     this.handshakePacket = Buffer.alloc(HANDSHAKE_PACKET_SIZE);
-    this.startTimestamp = Date.now();
 
     this.chunkSize = 128; // max bytes of data in a chunk (default 128)
     this.outChunkSize = 60000;
@@ -283,6 +282,7 @@ class RTMP_SESSION {
     this.videoCodecName = null;
     this.videoProfileName = null;
     this.videoLevel = null;
+    this.avcSequenceHeader = null;
 
     this.piledAVDataNum = 0;
   }
@@ -303,6 +303,7 @@ class RTMP_SESSION {
     if (this.pingInterval !== null) {
       clearInterval(this.pingInterval);
     }
+    this.socket.uncork();
     this.socket.destroy();
   }
 
@@ -469,6 +470,10 @@ class RTMP_SESSION {
           // payload parsing 준비
           if (!this.parsedPacket.payload) {
             this.parsedPacket.payload = Buffer.alloc(this.chunkSize);
+
+            if (this.parsedPacket.payload.length < this.parsedPacket.header.chunkMessageHeader.plen) {
+              this.parsedPacket.payload = Buffer.alloc(this.parsedPacket.header.chunkMessageHeader.plen + 1024);
+            }
           }
 
           this.parsingState = PARSE_PAYLOAD; // move on to the next step
@@ -492,6 +497,7 @@ class RTMP_SESSION {
             // clear parsedPacket
             this.bytesParsed = 0;
             this.parsedPacket.bytes = 0;
+            this.useExtendedTimestamp = 0;
             this.handler();
           } else if (this.parsedPacket.bytes % this.chunkSize === 0) {
             this.parsingState = PARSE_INIT;
@@ -687,7 +693,7 @@ class RTMP_SESSION {
 
     if (numOfChunks > 1) { // create type 3 chunks
       const { csid } = header.basicHeader;
-      const t3bheader = this.createChunkBasicHeader(packet.create(3, csid).header.basicHeader);
+      const t3bheader = this.createChunkBasicHeader(packet.create(CHUNK_TYPE_3, csid).header.basicHeader);
       for (let i = 1; i < numOfChunks; i += 1) {
         // write chunk type 3 header (create only basic header)
         t3bheader.copy(buf, bufOffset, 0, t3bheader.length);
@@ -801,6 +807,12 @@ class RTMP_SESSION {
         break;
       case 'getStreamLength':
         break;
+      case 'receiveAudio':
+        this.receiveAudio(decodeMsg.bool);
+        break;
+      case 'receiveVideo':
+        this.receiveVideo(decodeMsg.bool);
+        break;
       default:
         break;
     }
@@ -810,7 +822,7 @@ class RTMP_SESSION {
     // this.sendWindowACK(4294967293); // TODO: fix (2^32-1)
     // this.setPeerBandwidth(4294967293, 2); // TODO: why dynamic limit type?
     this.appname = this.onConnectCmd.cmdObj.app;
-    this.status[3] = 1; // isIdling = true
+    this.startTimestamp = Date.now();
     this.sendWindowACK(5000000); // TODO: fix (2^32-1)
     this.sendBandWidth(5000000, LIMIT_TYPE_DYNAMIC);
     this.sendChunkSize(this.outChunkSize);
@@ -880,11 +892,10 @@ class RTMP_SESSION {
     this.sendCallCmd.cmd = '_result';
     this.sendCallCmd.transId = this.onCallCmd.transId;
     this.sendCallCmd.cmdObj = null;
-    this.sendCmdMsg('sendCall');
+    this.sendCmdMsg(0, 'sendCall');
   }
 
   onCreateStream() {
-    console.log('create stream on!');
     ++this.streams;
     this.sendCreateStream();
   }
@@ -917,8 +928,8 @@ class RTMP_SESSION {
       }
       case SET_PEER_BANDWIDTH: {
         // extract windowSize(4B) and limitType(1B) from payload
-        const windowSize = this.parsedPacket.payload.readUInt32BE(0, 4);
-        const limitType = this.parsedPacket.payload.readUInt8(4);
+        const windowSize = payload.readUInt32BE(0, 4);
+        const limitType = payload.readUInt8(4);
         this.setPeerBandwidth(windowSize, limitType);
         break;
       }
@@ -1228,11 +1239,18 @@ class RTMP_SESSION {
       newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
       newPacket.header.chunkMessageHeader.msid = this.playStreamId;
       newPacket.header.chunkMessageHeader.mtid = DATA_MESSAGE_AMF0;
+      console.log('[startPlay] metadata');
+      console.log(newPacket);
       const chunks = this.createChunks(newPacket);
       this.socket.write(chunks);
+      console.log('[startPlay] send metaData!');
+      console.log(chunks);
     }
 
     if (publisherSession.audioCodec === 10) {
+      if (!publisherSession.aacSequenceHeader) {
+        console.log('acc sequence header is null');
+      }
       const newPacket = packet.create();
       newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
       newPacket.header.basicHeader.csid = RTMP_CHANNEL_AUDIO;
@@ -1246,6 +1264,9 @@ class RTMP_SESSION {
     }
 
     if (publisherSession.videoCodec === 7 || publisherSession.videoCodec === 12) {
+      if (!publisherSession.avcSequenceHeader) {
+        console.log('avc sequence header is null');
+      }
       const newPacket = packet.create();
       newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
       newPacket.header.basicHeader.csid = RTMP_CHANNEL_VIDEO;
@@ -1299,7 +1320,7 @@ class RTMP_SESSION {
     let newPacket = packet.create();
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
     newPacket.header.basicHeader.csid = RTMP_CHANNEL_DATA;
-    newPacket.header.chunkMessageHeader.mtid = COMMAND_MESSAGE_AMF0;
+    newPacket.header.chunkMessageHeader.mtid = DATA_MESSAGE_AMF0;
     newPacket.payload = AMF.encodeAmf0Data(this.sendSampleAccessCmd);
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
     newPacket.header.chunkMessageHeader.msid = msid;
@@ -1307,12 +1328,12 @@ class RTMP_SESSION {
     this.socket.write(chunks);
   }
 
-  receiveAudio(msg) {
-    this.status[5] = msg.bool;
+  receiveAudio(bool) {
+    this.status[5] = bool;
   }
 
-  receiveVideo(msg) {
-    this.status[6] = msg.bool;
+  receiveVideo(bool) {
+    this.status[6] = bool;
   }
 
   deleteStream(msg) {
@@ -1438,7 +1459,7 @@ class RTMP_SESSION {
       }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
-      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
+      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[5]) {
         chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
         playerSession.socket.write(chunks);
       }
@@ -1462,11 +1483,13 @@ class RTMP_SESSION {
 
     // AVC(H.264)
     // (!) codecID === 12, HEVC(H.265)
-    if (codecId === 7) {
+    if (codecId === 7 || codecId === 12) {
       if (frameType === 1 && payload[1] === 0) {
         this.avcSequenceHeader = Buffer.alloc(payload.length);
         payload.copy(this.avcSequenceHeader);
         const avcInfo = AV.readAVCSpecificConfig(this.avcSequenceHeader);
+        console.log('avcSequenceHeader');
+        console.log(this.avcSequenceHeader);
         this.videoWidth = avcInfo.width;
         this.videoHeight = avcInfo.height;
         this.videoProfileName = AV.getAVCProfileName(avcInfo);
@@ -1480,17 +1503,6 @@ class RTMP_SESSION {
       this.videoCodecName = VIDEO_CODEC_NAME[codecId];
       // print vidoe info
     }
-
-    // repackaging
-    // const packet = this.packet.create();
-    // packet.header.fmt = RTMP_CHUNK_TYPE_0;
-    // packet.header.cid = RTMP_CHANNEL_VIDEO;
-    // packet.header.type = RTMP_TYPE_VIDEO;
-    // packet.payload = payload;
-    // packet.header.length = packet.payload.length;
-    // packet.header.timestamp = this.parserPacket.clock;
-    // const rtmpChunks = this.createChunks(packet);
-    // const flvTag = NodeFlvSession.createFlvTag(packet);
 
     const newPacket = packet.create();
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
@@ -1509,7 +1521,7 @@ class RTMP_SESSION {
       }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
-      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
+      if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[6]) {
         chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
         playerSession.socket.write(chunks);
       }
@@ -1529,10 +1541,11 @@ class RTMP_SESSION {
     const offset = mtid === DATA_MESSAGE_AMF3 ? 1 : 0;
     payload = payload.slice(offset, this.parsedPacket.header.chunkMessageHeader.plen);
     const dataMessage = AMF.decodeAmf0Data(payload);
+    console.log('dataMessage');
+    console.log(dataMessage);
     switch (dataMessage.cmd) {
       case '@setDataFrame': {
         if (dataMessage.dataObj) {
-          console.log(dataMessage);
           this.audioSamplerate = dataMessage.dataObj.audiosamplerate;
           this.audioChannels = dataMessage.dataObj.stereo ? 2 : 1;
           this.videoWidth = dataMessage.dataObj.width;
@@ -1546,14 +1559,6 @@ class RTMP_SESSION {
         };
         this.metaData = AMF.encodeAmf0Data(opt);
         console.log(this.metaData);
-
-        // const packet = this.packet.create();
-        // packet.header.fmt = RTMP_CHUNK_TYPE_0;
-        // packet.header.cid = RTMP_CHANNEL_DATA;
-        // packet.header.type = RTMP_TYPE_DATA;
-        // packet.payload = this.metaData;
-        // packet.header.length = packet.payload.length;
-        // const rtmpChunks = this.createChunks(packet);
 
         const newPacket = packet.create();
         newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;

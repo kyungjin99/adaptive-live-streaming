@@ -174,13 +174,13 @@
 //     bitop.read(8);
 
 //     /* SPS id */
-//     bitop.read_golomb();
+//     bitop.readGolomb();
 
 //     if (profileIdc === 100 || profileIdc === 110
 //       || profileIdc === 122 || profileIdc === 244 || profileIdc === 44
 //       || profileIdc === 83 || profileIdc === 86 || profileIdc === 118) {
 //       /* chroma format idc */
-//       cfIdc = bitop.read_golomb();
+//       cfIdc = bitop.readGolomb();
 
 //       if (cfIdc === 3) {
 //         /* separate color plane */
@@ -188,10 +188,10 @@
 //       }
 
 //       /* bit depth luma - 8 */
-//       bitop.read_golomb();
+//       bitop.readGolomb();
 
 //       /* bit depth chroma - 8 */
-//       bitop.read_golomb();
+//       bitop.readGolomb();
 
 //       /* qpprime y zero transform bypass */
 //       bitop.read(1);
@@ -213,13 +213,13 @@
 //     }
 
 //     /* log2 max frame num */
-//     bitop.read_golomb();
+//     bitop.readGolomb();
 
 //     /* pic order cnt type */
-//     switch (bitop.read_golomb()) {
+//     switch (bitop.readGolomb()) {
 //       case 0:
 //         /* max pic order cnt */
-//         bitop.read_golomb();
+//         bitop.readGolomb();
 //         break;
 
 //       case 1:
@@ -227,33 +227,33 @@
 //         bitop.read(1);
 
 //         /* offset for non-ref pic */
-//         bitop.read_golomb();
+//         bitop.readGolomb();
 
 //         /* offset for top to bottom field */
-//         bitop.read_golomb();
+//         bitop.readGolomb();
 
 //         /* num ref frames in pic order */
-//         numRefFrames = bitop.read_golomb();
+//         numRefFrames = bitop.readGolomb();
 
 //         for (n = 0; n < numRefFrames; n++) {
 //           /* offset for ref frame */
-//           bitop.read_golomb();
+//           bitop.readGolomb();
 //         }
 //         break;
 //       default:
 //     }
 
 //     /* num ref frames */
-//     info.avc_ref_frames = bitop.read_golomb();
+//     info.avc_ref_frames = bitop.readGolomb();
 
 //     /* gaps in frame num allowed */
 //     bitop.read(1);
 
 //     /* pic width in mbs - 1 */
-//     width = bitop.read_golomb();
+//     width = bitop.readGolomb();
 
 //     /* pic height in map units - 1 */
-//     height = bitop.read_golomb();
+//     height = bitop.readGolomb();
 
 //     /* frame mbs only flag */
 //     frameMbsOnly = bitop.read(1);
@@ -268,10 +268,10 @@
 
 //     /* frame cropping */
 //     if (bitop.read(1)) {
-//       cropLeft = bitop.read_golomb();
-//       cropRight = bitop.read_golomb();
-//       cropTop = bitop.read_golomb();
-//       cropBottom = bitop.read_golomb();
+//       cropLeft = bitop.readGolomb();
+//       cropRight = bitop.readGolomb();
+//       cropTop = bitop.readGolomb();
+//       cropBottom = bitop.readGolomb();
 //     } else {
 //       cropLeft = 0;
 //       cropRight = 0;
@@ -376,23 +376,23 @@
 //   psps.sps_maxSubLayersMinus1 = rbspBitop.read(3);
 //   psps.sps_temporal_id_nesting_flag = rbspBitop.read(1);
 //   psps.profile_tier_level = HEVCParsePtl(rbspBitop, hevc, psps.sps_maxSubLayersMinus1);
-//   psps.sps_seq_parameter_set_id = rbspBitop.read_golomb();
-//   psps.chroma_format_idc = rbspBitop.read_golomb();
+//   psps.sps_seq_parameter_set_id = rbspBitop.readGolomb();
+//   psps.chroma_format_idc = rbspBitop.readGolomb();
 //   if (psps.chroma_format_idc === 3) {
 //     psps.separate_colour_plane_flag = rbspBitop.read(1);
 //   } else {
 //     psps.separate_colour_plane_flag = 0;
 //   }
-//   psps.pic_width_in_luma_samples = rbspBitop.read_golomb();
-//   psps.pic_height_in_luma_samples = rbspBitop.read_golomb();
+//   psps.pic_width_in_luma_samples = rbspBitop.readGolomb();
+//   psps.pic_height_in_luma_samples = rbspBitop.readGolomb();
 //   psps.conformance_window_flag = rbspBitop.read(1);
 //   if (psps.conformance_window_flag) {
 //     const vertMult = 1 + (psps.chroma_format_idc < 2);
 //     const horizMult = 1 + (psps.chroma_format_idc < 3);
-//     psps.conf_win_left_offset = rbspBitop.read_golomb() * horizMult;
-//     psps.conf_win_right_offset = rbspBitop.read_golomb() * horizMult;
-//     psps.conf_win_top_offset = rbspBitop.read_golomb() * vertMult;
-//     psps.conf_win_bottom_offset = rbspBitop.read_golomb() * vertMult;
+//     psps.conf_win_left_offset = rbspBitop.readGolomb() * horizMult;
+//     psps.conf_win_right_offset = rbspBitop.readGolomb() * horizMult;
+//     psps.conf_win_top_offset = rbspBitop.readGolomb() * vertMult;
+//     psps.conf_win_bottom_offset = rbspBitop.readGolomb() * vertMult;
 //   }
 //   // Logger.debug(psps);
 //   return psps;
@@ -671,13 +671,13 @@ function readH264SpecificConfig(avcSequenceHeader) {
     bitop.read(8);
 
     /* SPS id */
-    bitop.read_golomb();
+    bitop.readGolomb();
 
     if (profile_idc == 100 || profile_idc == 110 ||
       profile_idc == 122 || profile_idc == 244 || profile_idc == 44 ||
       profile_idc == 83 || profile_idc == 86 || profile_idc == 118) {
       /* chroma format idc */
-      cf_idc = bitop.read_golomb();
+      cf_idc = bitop.readGolomb();
 
       if (cf_idc == 3) {
         /* separate color plane */
@@ -685,10 +685,10 @@ function readH264SpecificConfig(avcSequenceHeader) {
       }
 
       /* bit depth luma - 8 */
-      bitop.read_golomb();
+      bitop.readGolomb();
 
       /* bit depth chroma - 8 */
-      bitop.read_golomb();
+      bitop.readGolomb();
 
       /* qpprime y zero transform bypass */
       bitop.read(1);
@@ -710,14 +710,14 @@ function readH264SpecificConfig(avcSequenceHeader) {
     }
 
     /* log2 max frame num */
-    bitop.read_golomb();
+    bitop.readGolomb();
 
     /* pic order cnt type */
-    switch (bitop.read_golomb()) {
+    switch (bitop.readGolomb()) {
       case 0:
 
         /* max pic order cnt */
-        bitop.read_golomb();
+        bitop.readGolomb();
         break;
 
       case 1:
@@ -726,32 +726,32 @@ function readH264SpecificConfig(avcSequenceHeader) {
         bitop.read(1);
 
         /* offset for non-ref pic */
-        bitop.read_golomb();
+        bitop.readGolomb();
 
         /* offset for top to bottom field */
-        bitop.read_golomb();
+        bitop.readGolomb();
 
         /* num ref frames in pic order */
-        num_ref_frames = bitop.read_golomb();
+        num_ref_frames = bitop.readGolomb();
 
         for (n = 0; n < num_ref_frames; n++) {
           /* offset for ref frame */
-          bitop.read_golomb();
+          bitop.readGolomb();
         }
       default: break;
     }
 
     /* num ref frames */
-    info.avc_ref_frames = bitop.read_golomb();
+    info.avc_ref_frames = bitop.readGolomb();
 
     /* gaps in frame num allowed */
     bitop.read(1);
 
     /* pic width in mbs - 1 */
-    width = bitop.read_golomb();
+    width = bitop.readGolomb();
 
     /* pic height in map units - 1 */
-    height = bitop.read_golomb();
+    height = bitop.readGolomb();
 
     /* frame mbs only flag */
     frame_mbs_only = bitop.read(1);
@@ -766,10 +766,10 @@ function readH264SpecificConfig(avcSequenceHeader) {
 
     /* frame cropping */
     if (bitop.read(1)) {
-      crop_left = bitop.read_golomb();
-      crop_right = bitop.read_golomb();
-      crop_top = bitop.read_golomb();
-      crop_bottom = bitop.read_golomb();
+      crop_left = bitop.readGolomb();
+      crop_right = bitop.readGolomb();
+      crop_top = bitop.readGolomb();
+      crop_bottom = bitop.readGolomb();
     } else {
       crop_left = 0;
       crop_right = 0;
@@ -874,23 +874,23 @@ function HEVCParseSPS(SPS, hevc) {
   psps.sps_max_sub_layers_minus1 = rbspBitop.read(3);
   psps.sps_temporal_id_nesting_flag = rbspBitop.read(1);
   psps.profile_tier_level = HEVCParsePtl(rbspBitop, hevc, psps.sps_max_sub_layers_minus1);
-  psps.sps_seq_parameter_set_id = rbspBitop.read_golomb();
-  psps.chroma_format_idc = rbspBitop.read_golomb();
+  psps.sps_seq_parameter_set_id = rbspBitop.readGolomb();
+  psps.chroma_format_idc = rbspBitop.readGolomb();
   if (psps.chroma_format_idc == 3) {
     psps.separate_colour_plane_flag = rbspBitop.read(1);
   } else {
     psps.separate_colour_plane_flag = 0;
   }
-  psps.pic_width_in_luma_samples = rbspBitop.read_golomb();
-  psps.pic_height_in_luma_samples = rbspBitop.read_golomb();
+  psps.pic_width_in_luma_samples = rbspBitop.readGolomb();
+  psps.pic_height_in_luma_samples = rbspBitop.readGolomb();
   psps.conformance_window_flag = rbspBitop.read(1);
   if (psps.conformance_window_flag) {
     let vert_mult = 1 + (psps.chroma_format_idc < 2);
     let horiz_mult = 1 + (psps.chroma_format_idc < 3);
-    psps.conf_win_left_offset = rbspBitop.read_golomb() * horiz_mult;
-    psps.conf_win_right_offset = rbspBitop.read_golomb() * horiz_mult;
-    psps.conf_win_top_offset = rbspBitop.read_golomb() * vert_mult;
-    psps.conf_win_bottom_offset = rbspBitop.read_golomb() * vert_mult;
+    psps.conf_win_left_offset = rbspBitop.readGolomb() * horiz_mult;
+    psps.conf_win_right_offset = rbspBitop.readGolomb() * horiz_mult;
+    psps.conf_win_top_offset = rbspBitop.readGolomb() * vert_mult;
+    psps.conf_win_bottom_offset = rbspBitop.readGolomb() * vert_mult;
   }
   // Logger.debug(psps);
   return psps;
