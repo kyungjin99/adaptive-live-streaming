@@ -31,7 +31,6 @@ class TRANS_SESSION extends EventEmitter {
       .videoBitrate('1000') // set video bitrate
       .size('640x480') // set output frame size
       .aspect('4:3') // set output frame aspect ratio
-      .output(`${outPath}/${this.hlsName}`) // add an output to the command
       .outputOptions([
         '-profile:v baseline', // baseline profile (level 3.0) for H264 video codec
         '-level 3.0',
@@ -43,6 +42,7 @@ class TRANS_SESSION extends EventEmitter {
         '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
         '-f hls', // HLS format
       ])
+      .output(`${outPath}/${this.hlsName}`) // add an output to the command
       .on('start', (commandLine) => { // ffmpeg process started
         console.log(`Spawned ffmpeg with command: ${commandLine}`);
       })
