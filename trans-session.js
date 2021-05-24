@@ -9,7 +9,7 @@ class TRANS_SESSION extends EventEmitter {
     this.port = conf.port;
     this.streamPath = conf.streamPath;
     this.args = conf.args;
-    this.hlsName = 'index.m3u8';;
+    this.hlsName = 'index.m3u8';
   }
 
   run() {
@@ -25,16 +25,18 @@ class TRANS_SESSION extends EventEmitter {
       .videoBitrate('1000') // set video bitrate
       .size('640x480') // set output frame size
       .aspect('4:3') // set output frame aspect ratio
-      .output(`${outPath}/${this.hlsName}`) // add an output to the command
       .outputOptions([
         '-profile:v baseline', // baseline profile (level 3.0) for H264 video codec
         '-level 3.0',
+        '-g 20', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
         '-s 640x360', // 640px width, 360px height output video dimensions
         '-start_number 0', // start the first .ts segment at index 0
-        '-hls_time 5', // 5 second segment duration
-        '-hls_list_size 0', // Maximum number of playlist entries (0 means all entries/infinite)
+        '-hls_time 2', // 2 second segment duration
+        '-hls_list_size 5', // maximum number of playlist entries (0 means all entries/infinite)
+        '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
         '-f hls', // HLS format
       ])
+      .output(`${outPath}/${this.hlsName}`) // add an output to the command
       .on('start', (commandLine) => { // ffmpeg process started
         console.log(`Spawned ffmpeg with command: ${commandLine}`);
       })
