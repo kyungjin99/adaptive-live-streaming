@@ -48,6 +48,7 @@
         "brace-style": "off",
         "operator-linebreak": "off",
         "one-var": "off",
-        "one-var-declaration-per-line": "off"
+        "one-var-declaration-per-line": "off",
+        "no-multi-str": "off"
     }
 }

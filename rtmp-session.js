@@ -165,7 +165,7 @@ const cmdStructure = {
   },
   onPlayCmd: () => {
     return {
-      cmd: 'publish',
+      cmd: 'play',
       transId: null,
       cmdObj: null,
       name: null,
@@ -284,7 +284,7 @@ class RTMP_SESSION {
     this.videoLevel = null;
     this.avcSequenceHeader = null;
 
-    this.piledAVDataNum = 0;
+    // this.piledAVDataNum = 0;
   }
 
   run() {
@@ -303,7 +303,7 @@ class RTMP_SESSION {
     if (this.pingInterval !== null) {
       clearInterval(this.pingInterval);
     }
-    this.socket.uncork();
+    // this.socket.uncork();
     this.socket.destroy();
   }
 
@@ -652,7 +652,7 @@ class RTMP_SESSION {
     const mheaderBuf = this.createChunkMessageHeader(header);
     const bheaderSize = bheaderBuf.length; // size of chunk basic header
     const mHeaderSize = mheaderBuf.length; // size of chunk message header
-    const useExtendedTimestamp = (header.chunkMessageHeader.timestamp === 0xFFFFFF) ? 4 : 0;
+    const useExtendedTimestamp = (header.chunkMessageHeader.timestamp >= 0xFFFFFF) ? 4 : 0;
     const extendedTimestampBuf = Buffer.alloc(useExtendedTimestamp);
     const payloadSize = header.chunkMessageHeader.plen; // size of payload in packet
     let bufOffset = 0; // buffer offset
@@ -930,7 +930,7 @@ class RTMP_SESSION {
         // extract windowSize(4B) and limitType(1B) from payload
         const windowSize = payload.readUInt32BE(0, 4);
         const limitType = payload.readUInt8(4);
-        this.setPeerBandwidth(windowSize, limitType);
+        // this.setPeerBandwidth(windowSize, limitType);
         break;
       }
       default:
@@ -1152,7 +1152,7 @@ class RTMP_SESSION {
       this.sendPublish(`${this.publishStreamPath} now publishing`);
 
       for (const idlePlayerId of CURRENT_PROGRESS.idlePlayers) {
-        const idlePlayerSession = CURRENT_PROGRESS.idlePlayers.get(idlePlayerId);
+        const idlePlayerSession = CURRENT_PROGRESS.sessions.get(idlePlayerId);
         if (idlePlayerSession && idlePlayerSession.playStreamPath === this.publishStreamPath) {
           idlePlayerSession.startPlay();
           CURRENT_PROGRESS.idlePlayers.delete(idlePlayerId);
@@ -1307,10 +1307,11 @@ class RTMP_SESSION {
 
         // send play-start command message
         this.sendPlayCmd.info.code = 'Netstream.Play.Start';
-        this.sendPlayCmd.info.description = 'Start playing stream';
+        this.sendPlayCmd.info.description = 'Started playing stream';
         this.sendCmdMsg(this.playStreamId, 'sendPlayStart');
 
-        this.sendSampleAccess(this.playStreamId);
+        // this.sendSampleAccess(this.playStreamId);
+        this.sendSampleAccess();
         break;
       default: break;
     }
@@ -1454,9 +1455,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      if (playerSession.piledAVDataNum === 0) {
-        playerSession.socket.cork();
-      }
+      // if (playerSession.piledAVDataNum === 0) {
+      //   playerSession.socket.cork();
+      // }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[5]) {
@@ -1464,12 +1465,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      ++playerSession.piledAVDataNum;
+      // ++playerSession.piledAVDataNum;
 
-      if (playerSession.piledAVDataNum === 10) {
-        process.nextTick(() => playerSession.socket.uncork());
-        playerSession.piledAVDataNum = 0;
-      }
+      // if (playerSession.piledAVDataNum === 10) {
+      //   process.nextTick(() => playerSession.socket.uncork());
+      //   playerSession.piledAVDataNum = 0;
+      // }
     }
 
     // (!)player session buffer cork()
@@ -1516,9 +1517,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      if (playerSession.piledAVDataNum === 0) {
-        playerSession.socket.cork();
-      }
+      // if (playerSession.piledAVDataNum === 0) {
+      //   playerSession.socket.cork();
+      // }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[6]) {
@@ -1526,12 +1527,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      ++playerSession.piledAVDataNum;
+      // ++playerSession.piledAVDataNum;
 
-      if (playerSession.piledAVDataNum === 10) {
-        process.nextTick(() => playerSession.socket.uncork());
-        playerSession.piledAVDataNum = 0;
-      }
+      // if (playerSession.piledAVDataNum === 10) {
+      //   process.nextTick(() => playerSession.socket.uncork());
+      //   playerSession.piledAVDataNum = 0;
+      // }
     }
 
     // (!)session? address?

@@ -26,9 +26,15 @@ class TRANS_SESSION extends EventEmitter {
 
     mkdirp.sync(outPath);
     let argv = ['-y', '-i', inPath];
+
     Array.prototype.push.apply(argv, ['-c:v', vc]);
     Array.prototype.push.apply(argv, ['-c:a', ac]);
-    Array.prototype.push.apply(argv, ['-f', 'tee', '-map', '0:a?', '-map', '0:v?', `[hls_time=2:hls_list_size=5:hls_flags=delete_segments]${outPath}/${this.hlsName}`]);
+    Array.prototype.push.apply(argv, ['-f', 'tee', '-map', '0:a?', '-map', '0:v?']);
+    Array.prototype.push.apply(argv, ['-hls_time', 2]);
+    Array.prototype.push.apply(argv, ['-hls_list_size', 5]);
+    Array.prototype.push.apply(argv, ['-hls_flags', 'delete_segments']);
+    Array.prototype.push.apply(argv, [`${outPath}/${this.hlsName}`]);
+
     console.log(argv);
 
     this.ffmpegProcess = spawn(this.ffmpegPath, argv);
@@ -46,18 +52,18 @@ class TRANS_SESSION extends EventEmitter {
     });
     this.ffmpegProcess.on('close', (code) => {
       this.emit('transEnd');
-      // fs.readdir(outPath, (error, files) => {
-      //   if (error) {
-      //     console.log('[TRANS SESSION] Read directory error after transmuxing');
-      //     console.log(error);
-      //   } else {
-      //     for (const filename of files) {
-      //       if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
-      //         fs.unlinkSync(`${outPath}/${filename}`);
-      //       }
-      //     }
-      //   }
-      // });
+      fs.readdir(outPath, (error, files) => {
+        if (error) {
+          console.log('[TRANS SESSION] Read directory error after transmuxing');
+          console.log(error);
+        } else {
+          for (const filename of files) {
+            if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
+              fs.unlinkSync(`${outPath}/${filename}`);
+            }
+          }
+        }
+      });
     });
   }
 
