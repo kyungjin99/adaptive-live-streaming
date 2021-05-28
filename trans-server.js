@@ -4,9 +4,8 @@ const TransSession = require('./trans-session');
 const CURRENT_PROGRESS = require('./rtmp-center-ad');
 
 // 서버 내의 ffmpeg 경로. 테스트 하고 싶다면 자신의 경로에 맞게 수정 필요.
-const FFMPEG_PATH = 'C:/Program Files/ffmpeg/bin/ffmpeg.exe';
+const FFMPEG_PATH = 'C:/ffmpeg/bin/ffmpeg.exe';
 const PORT = 1935;
-const RESOLUTIONS = ['1080p', '720p', '480p'];
 
 class TRANS_SERVER {
   constructor() {
@@ -34,11 +33,10 @@ class TRANS_SERVER {
     conf.streamPath = streamPath;
     conf.args = args;
 
-    // conf.resolution = resolution;
-
     const session = new TransSession(conf);
     this.transSessions.set(id, session);
-    session.on('transEnd', () => {
+    session.on('end', () => {
+      console.log('[TRANS SERVER] trans session deleted');
       this.transSessions.delete(id);
     });
     session.run();

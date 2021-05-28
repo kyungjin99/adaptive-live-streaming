@@ -1,12 +1,14 @@
 extends ./layout.pug
 
 block css 
-  link(rel="stylesheet" href="https://unpkg.com/video.js/dist/video-js.css")
+  link(rel="stylesheet" href="https://vjs.zencdn.net/7.0.0/video-js.css")
   link(rel="stylesheet" href="/stylesheets/streaming.css")
 
 block script
-  //- script(src="https://unpkg.com/video.js/dist/video.js")
-  //- script(src="https://unpkg.com/videojs-contrib-hls/dist/videojs-contrib-hls.js")
+  script(src="https://unpkg.com/video.js/dist/video.js")
+  script(src="https://unpkg.com/videojs-flash/dist/videojs-flash.js")
+  script(src="https://cdn.jsdelivr.net/npm/@videojs/http-streaming@2.8.2/dist/videojs-http-streaming.min.js")
+  //- script(src="https://cdnjs.cloudflare.com/ajax/libs/videojs-resolution-switcher/0.4.2/videojs-resolution-switcher.min.js")
 
 
 block title
@@ -14,25 +16,55 @@ block title
 
 block content 
   .video-container
-    video(id="video" controls preload="auto" width="1280" height="720")
-  script(src="https://cdn.jsdelivr.net/npm/hls.js@latest")
+    video(id="video" class="video-js vjs-default-skin" controls preload="auto" width="1280" height="720" data-setup="{}")
+      source(src="#{url}/master.m3u8")
+  
   script.
-    const video = document.getElementById("video");
-    const videoSrc = "#{url}";
+    const player = videojs("video");
+    player.src({
+      src: "#{url}/master.m3u8",
+      type: "application/x-mpegurl"
+    });
+    player.play();
 
-    if(Hls.isSupported()) {
-      console.log("hi");
-      const hls = new Hls();
+    //- console.log("url = #{url}");
+    //- const player = videojs("video", {
+    //-     controls: true,
+    //-     sources: [
+    //-       { "type": "application/x-mpegurl", "src": "#{url}/high/index.m3u8", "res": "720" },
+    //-       { "type": "application/x-mpegurl", "src": "#{url}/middle/index.m3u8", "res": "480" },
+    //-       { "type": "application/x-mpegurl", "src": "#{url}/low/index.m3u8", "res": "360" },
+    //-     ],
+    //-     plugins: {
+    //-       videoJsResolutionSwitcher: {
+    //-         default: "low",
+    //-         dynamicLabel: true,
+    //-       }
+    //-     }
+    //-   }, () => {
+    //-   // Add dynamically sources via updateSrc method
+    //-     player.updateSrc([
+    //-       {
+    //-         src: '#{url}/high/index.m3u8',
+    //-         type: 'application/x-mpegurl',
+    //-         res: "720",
+    //-         label: '720p'
+    //-       },
+    //-       {
+    //-         src: '#{url}/middle/index.m3u8',
+    //-         type: 'application/x-mpegurl',
+    //-         res: "480",
+    //-         label: '480p'
+    //-       },
+    //-       {
+    //-         src: '#{url}/low/index.m3u8',
+    //-         type: 'application/x-mpegurl',
+    //-         res: "480",
+    //-         label: '360p'
+    //-       },
+    //-     ]);
 
-      hls.loadSource(videoSrc);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log("video play");
-        video.play();
-      });
-    } else if(video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = videoSrc;
-        video.addEventListener("loadedmetadata", () => {
-          video.play();
-        });
-    }
+    //-     player.on('resolutionchange', () => {
+    //-       console.log('Source changed to %s', player.src())
+    //-     });
+    //- });

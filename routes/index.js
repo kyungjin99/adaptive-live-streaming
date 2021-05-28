@@ -26,7 +26,7 @@ router.get('/', async (req, res, next) => {
 
 router.get('/live/:id', (req, res, next) => {
   const id = req.params.id;
-  const url = `/live/${id}/index.m3u8`;
+  const url = `/${id}`;
   console.log(`id = ${id}`);
   console.log(`url = ${url}`);
   res.render('streaming', { id, url });

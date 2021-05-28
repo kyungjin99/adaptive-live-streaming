@@ -1,0 +1,38 @@
+extends ./layout.pug
+
+block css 
+  link(rel="stylesheet" href="https://unpkg.com/video.js/dist/video-js.css")
+  link(rel="stylesheet" href="/stylesheets/streaming.css")
+
+block script
+  //- script(src="https://unpkg.com/video.js/dist/video.js")
+  //- script(src="https://unpkg.com/videojs-contrib-hls/dist/videojs-contrib-hls.js")
+
+
+block title
+  title #{id}님의 방송
+
+block content 
+  .video-container
+    video(id="video" controls preload="auto" width="1280" height="720")
+  script(src="https://cdn.jsdelivr.net/npm/hls.js@latest")
+  script.
+    const video = document.getElementById("video");
+    const videoSrc = "#{url}";
+
+    if(Hls.isSupported()) {
+      const hls = new Hls();
+
+      hls.loadSource(videoSrc);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log("video play");
+        video.play();
+      });
+    } else if(video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = videoSrc;
+      video.addEventListener("loadedmetadata", () => {
+        video.play();
+        console.log(video.tech_.hls.representation());
+      });
+    }
