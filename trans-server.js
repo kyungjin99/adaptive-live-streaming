@@ -40,22 +40,6 @@ class TRANS_SERVER {
       this.transSessions.delete(id);
     });
     session.run();
-
-    // for (const resolution of RESOLUTIONS) {
-    //   const conf = {};
-    //   conf.ffmpeg = FFMPEG_PATH;
-    //   conf.port = PORT;
-    //   conf.streamPath = streamPath;
-    //   conf.args = args;
-    //   conf.resolution = resolution;
-
-    //   const session = new TransSession(conf);
-    //   this.transSessions.set(`${id} ${resolution}`, session);
-    //   session.on('transEnd', () => {
-    //     this.transSessions.delete(`${id} ${resolution}`);
-    //   });
-    //   session.run();
-    // }
   }
 }
 

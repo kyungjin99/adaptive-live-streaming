@@ -372,6 +372,7 @@ class RTMP_SESSION {
   onSocketError(error) {
     console.error('[ERROR] arbitrary error occured');
     console.log(error);
+    console.log(`id = ${this.id}`);
     this.stop();
   }
 
@@ -1122,10 +1123,6 @@ class RTMP_SESSION {
     this.socket.write(buf);
   }
 
-  // streamEOF(cid) { // playback할 데이터가 없음을 알려주는 메서드. 필요없을듯?
-  //   return null; // temp
-  // }
-
   // // 특정 청크 스트림에 데이터가 없음을 클라이언트에게 알리는 메서드
   // streamDry(csid) {
   //   const newPacket = packet.create();
@@ -1157,7 +1154,7 @@ class RTMP_SESSION {
     if (typeof this.onPublishCmd.streamName !== 'string') return;
 
     // 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
-    this.publishStreamPath = `/${this.appname}/${this.onPublishCmd.streamName.split('?')[0]}`;
+    this.publishStreamPath = `/${this.appname}`;
     this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     this.publishArgs = QueryString.parse(this.onPublishCmd.streamName.split('?')[1]);
     if (this.status[0] === 0) return;
@@ -1222,7 +1219,7 @@ class RTMP_SESSION {
       return;
     }
 
-    this.playStreamPath = `/${this.appname}/${this.onPlayCmd.streamName.split('?')[0]}`;
+    this.playStreamPath = `/${this.appname}`;
     this.playStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     this.playArgs = QueryString.parse(this.onPlayCmd.streamName.split('?')[1]);
 
@@ -1317,6 +1314,7 @@ class RTMP_SESSION {
         this.sendPlayCmd.info.level = 'error';
         this.sendPlayCmd.info.code = 'Netstream.Play.BadConnection';
         this.sendPlayCmd.info.description = description;
+        this.sendCmdMsg(this.playStreamId, 'sendPlay');
         break;
       case `${this.playStreamPath} now playing`:
         this.sendPlayCmd.info.level = 'status';
@@ -1332,24 +1330,26 @@ class RTMP_SESSION {
         // send play-start command message
         this.sendPlayCmd.info.code = 'Netstream.Play.Start';
         this.sendPlayCmd.info.description = 'Started playing stream';
+        this.sendCmdMsg(this.playStreamId, 'sendPlay');
         // send cmdmsg last line
 
         // this.sendSampleAccess(this.playStreamId);
-        this.sendSampleAccess();
+        this.sendSampleAccess(this.playStreamId);
         break;
       case `${this.playStreamPath} now stopped`:
         this.sendPlayCmd.level = 'status';
         this.sendPlayCmd.code = 'NetStream.Play.Stop';
         this.sendPlayCmd.description = description;
+        this.sendCmdMsg(this.playStreamId, 'sendPlay');
         break;
       case 'Streamer unpublished stream':
         this.sendPlayCmd.level = 'status';
         this.sendPlayCmd.code = 'NetStream.Play.UnpublishNotify';
         this.sendPlayCmd.description = description;
+        this.sendCmdMsg(this.playStreamId, 'sendPlay');
         break;
       default: break;
     }
-    this.sendCmdMsg(this.playStreamId, 'sendPlay');
   }
 
   sendSampleAccess(msid) {
@@ -1414,11 +1414,12 @@ class RTMP_SESSION {
           const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
           playerSession.sendPlay('Streamer unpublished stream'); // "NetStream.Play.UnpublishNotify" 상태메시지
 
-          CURRENT_PROGRESS.idlePlayers.add(playerId);
-          playerSession.status[2] = 0; // not playing
-          playerSession.status[3] = 1; // true idling
+          // CURRENT_PROGRESS.idlePlayers.add(playerId);
+          // playerSession.status[2] = 0; // not playing
+          // playerSession.status[3] = 1; // true idling
 
           playerSession.streamEOF(playerSession.playStreamId);
+          playerSession.stop();
 
           // session.flush();
         }

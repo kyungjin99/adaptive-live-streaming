@@ -63,11 +63,31 @@ class TRANS_SESSION extends EventEmitter {
     }
 
     const command = ffmpegCommand(this.inPath)
+      .output(`${this.outPath}/${this.hlsName}`) // add an output to the command
       .inputFormat('flv')
       .audioCodec('aac') // set audio codec
       .videoCodec('libx264') // set video codec // h264는 지원 안 하는 듯,, libx264로 해야 돌아감
+      // .withFPSInput(30)
+      // .aspect('4:3') // set output frame aspect ratio
+      .outputOptions([
+        '-profile:v high', // baseline profile (level 3.0) for H264 video codec
+        '-level 4.1',
+        '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
+        //'-s 640x360', // 640px width, 360px height output video dimensions
+        '-start_number 0', // start the first .ts segment at index 0
+        '-hls_time 2', // 2 second segment duration
+        '-hls_list_size 5', // maximum number of playlist entries (0 means all entries/infinite)
+        '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
+        '-f hls', // HLS format
+        '-max_muxing_queue_size 9999',
+      ])
       .videoBitrate(HIGH_BITRATE / 1000) // set video bitrate
       .size(HIGH_RESOLUTION) // set output frame size
+
+      .output(`${this.outPath2}/${this.hlsName}`) // add an output to the command
+      .inputFormat('flv')
+      .audioCodec('aac') // set audio codec
+      .videoCodec('libx264') // set video codec // h264는 지원 안 하는 듯,, libx264로 해야 돌아감
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
@@ -82,10 +102,13 @@ class TRANS_SESSION extends EventEmitter {
         '-f hls', // HLS format
         '-max_muxing_queue_size 9999',
       ])
-      .output(`${this.outPath}/${this.hlsName}`) // add an output to the command
-
       .videoBitrate(MIDDLE_BITRATE / 1000) // set video bitrate
       .size(MIDDLE_RESOLUTION) // set output frame size
+
+      .output(`${this.outPath3}/${this.hlsName}`) // add an output to the command
+      .inputFormat('flv')
+      .audioCodec('aac') // set audio codec
+      .videoCodec('libx264') // set video codec // h264는 지원 안 하는 듯,, libx264로 해야 돌아감
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
@@ -100,25 +123,9 @@ class TRANS_SESSION extends EventEmitter {
         '-f hls', // HLS format
         '-max_muxing_queue_size 9999',
       ])
-      .output(`${this.outPath2}/${this.hlsName}`) // add an output to the command
-
       .videoBitrate(LOW_BITRATE / 1000) // set video bitrate
       .size(LOW_RESOLUTION) // set output frame size
-      // .withFPSInput(30)
-      // .aspect('4:3') // set output frame aspect ratio
-      .outputOptions([
-        '-profile:v high', // baseline profile (level 3.0) for H264 video codec
-        '-level 4.1',
-        '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
-        //'-s 640x360', // 640px width, 360px height output video dimensions
-        '-start_number 0', // start the first .ts segment at index 0
-        '-hls_time 2', // 2 second segment duration
-        '-hls_list_size 5', // maximum number of playlist entries (0 means all entries/infinite)
-        '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
-        '-f hls', // HLS format
-        '-max_muxing_queue_size 9999',
-      ])
-      .output(`${this.outPath3}/${this.hlsName}`) // add an output to the command
+
 
       .on('start', (commandLine) => { // ffmpeg process started
         console.log(`Spawned ffmpeg with command: ${commandLine}`);
