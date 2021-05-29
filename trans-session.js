@@ -26,6 +26,9 @@ const LOW_RESOLUTION = '640x360';
 class TRANS_SESSION extends EventEmitter {
   constructor(conf) {
     super();
+
+    this.id = conf.id;
+
     this.port = conf.port;
     this.streamPath = conf.streamPath;
     this.mediaRoot = path.join(__dirname, 'live');
@@ -126,28 +129,29 @@ class TRANS_SESSION extends EventEmitter {
       .videoBitrate(LOW_BITRATE / 1000) // set video bitrate
       .size(LOW_RESOLUTION) // set output frame size
 
-
       .on('start', (commandLine) => { // ffmpeg process started
-        console.log(`Spawned ffmpeg with command: ${commandLine}`);
+        // console.log(`Spawned ffmpeg with command: ${commandLine}`);
       })
       .on('codecData', (data) => { // input codec data available
         console.log(`Input is ${data.audio} audio with ${data.video} video`);
       })
       .on('progress', (progress) => { // transcoding progress information
-        console.log(`Processing: ${progress.percent}% done`);
+        // console.log(`Processing: ${progress.percent}% done`);
       })
       .on('stderr', (stderrLine) => { // ffmpeg output
-        console.log(`Stderr output: ${stderrLine}`);
+        // console.log(`Stderr output: ${stderrLine}`);
       })
       .on('error', (err, stdout, stderr) => { // transcoding error
         console.log(`Cannot process video: ${err.message}`);
         this.emit('end');
       })
-      .on('end', (stdout, stderr) => { // processing finished
-        console.log('Transcoding succeeded!!!!!');
-        this.emit('transEnd');
-      })
+      .on('end', this.onFFmpegEnd.bind(this))
       .run();
+  }
+
+  onFFmpegEnd(stdout, stderr) {
+    console.log('Transcoding succeeded!!!!!');
+    this.emit('transEnd', this.id);
   }
 
   run() {
@@ -189,7 +193,13 @@ class TRANS_SESSION extends EventEmitter {
     });
   }
 
-  transEnd() {
+  transEnd(id) {
+    console.log(`[TRANS END] 종료하라고 명령받은 id = ${id}`);
+    console.log(`[TRANS END] 현재 trans session의 id = ${this.id}`);
+    if (this.id !== id) {
+      return;
+    }
+
     this.emit('end');
     try {
       const files = fs.readdirSync(this.outPath);

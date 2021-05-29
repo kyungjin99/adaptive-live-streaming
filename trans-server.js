@@ -32,6 +32,7 @@ class TRANS_SERVER {
     conf.port = PORT;
     conf.streamPath = streamPath;
     conf.args = args;
+    conf.id = id;
 
     const session = new TransSession(conf);
     this.transSessions.set(id, session);

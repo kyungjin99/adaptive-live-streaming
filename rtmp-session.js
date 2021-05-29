@@ -299,12 +299,14 @@ class RTMP_SESSION {
 
   stop() {
     if (this.playStreamId > 0) {
-      console.log('Delete Stream called before stop playing and delete socket');
+      console.log('[Stop] Delete Stream called before stop playing and delete socket');
+      console.log(`[Stop] player id = ${this.id}`);
       this.onDeleteStream({ streamId: this.playStreamId });
     }
 
     if (this.publishStreamId > 0) {
-      console.log('Delete Stream called before stop publishing and delete socket');
+      console.log('[Stop] Delete Stream called before stop publishing and delete socket');
+      console.log(`[Stop] publisher id = ${this.id}`);
       this.onDeleteStream({ streamId: this.publishStreamId });
     }
 
@@ -314,7 +316,7 @@ class RTMP_SESSION {
 
     console.log(`[Socket Close] id=${this.id}`);
     CURRENT_PROGRESS.sessions.delete(this.id);
-    this.socket.uncork();
+    // this.socket.uncork();
     this.socket.destroy();
   }
 
@@ -370,14 +372,15 @@ class RTMP_SESSION {
   }
 
   onSocketError(error) {
-    console.error('[ERROR] arbitrary error occured');
+    console.error('[onSocketError] arbitrary error occured');
+    console.log(`[onSocketError] id = ${this.id}`);
     console.log(error);
-    console.log(`id = ${this.id}`);
     this.stop();
   }
 
   onSocketTimeout() {
-    console.error('[ERROR] timeout');
+    console.error('[onSocketTimeout] timeout');
+    console.error(`[onSocketTimeout] id = ${this.id}`);
     this.stop();
   }
 
@@ -786,8 +789,8 @@ class RTMP_SESSION {
   }
 
   parseCmdMsg(amfType, payload) {
-    console.log(`payload size = ${payload.length}`);
-    console.log(payload);
+    // console.log(`payload size = ${payload.length}`);
+    // console.log(payload);
     const amf = (amfType === COMMAND_MESSAGE_AMF0) ? 0 : 3;
     const offset = (amf === 0) ? 0 : 1;
     payload = payload.slice(offset, this.parsedPacket.header.chunkMessageHeader.plen);
@@ -948,7 +951,7 @@ class RTMP_SESSION {
         // extract windowSize(4B) and limitType(1B) from payload
         const windowSize = payload.readUInt32BE(0, 4);
         const limitType = payload.readUInt8(4);
-        // this.setPeerBandwidth(windowSize, limitType);
+        this.setPeerBandwidth(windowSize, limitType);
         break;
       }
       default:
@@ -1102,6 +1105,7 @@ class RTMP_SESSION {
     newPacket.payload = Buffer.from([0, UCM_PING_REQUEST, (timestampDelta >> 24) & 0xff, (timestampDelta >> 16) & 0xff, (timestampDelta >> 8) & 0xff, timestampDelta & 0xff]);
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
 
+    console.log(`[sendPingRequest] id = ${this.id} send ping = ${timestampDelta}`);
     this.socket.write(this.createChunks(newPacket));
   }
 
@@ -1112,7 +1116,11 @@ class RTMP_SESSION {
 
   pingResponse(payload) {
     const timestamp = payload.readUInt32BE();
-    if (this.pingRequestTimestamp !== timestamp) this.stop();
+    console.log(`[pingResponse] receive ping. timestamp = ${timestamp}`);
+    if (this.pingRequestTimestamp !== timestamp) {
+      console.log('[pingResponse] ping time error');
+      this.stop();
+    }
     else this.pingRequestTimestamp = null;
   }
 
@@ -1223,13 +1231,12 @@ class RTMP_SESSION {
     this.playStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     this.playArgs = QueryString.parse(this.onPlayCmd.streamName.split('?')[1]);
 
-    console.log(`[on play] playstreampath = ${this.playStreamPath}`);
-    console.log(`[on play] playstreamid = ${this.playStreamId}`);
-    console.log(`[on play] playstreamargs = ${this.playStreamArgs}`);
+    console.log(`[onPlay] playstreampath = ${this.playStreamPath}`);
+    console.log(`[onPlay] playstreamid = ${this.playStreamId}`);
+    console.log(`[onPlay] playstreamargs = ${this.playStreamArgs}`);
 
     // 이 스트림이 play중인 경우 (play 요청이 중복된 경우)
     if (this.status[2]) {
-      console.log(`[RTMP SESSION] id=${this.id}. Connection already playing`);
       this.sendPlay('Connection already playing');
     } else {
       this.sendPlay(`${this.playStreamPath} now playing`);
@@ -1239,6 +1246,7 @@ class RTMP_SESSION {
       this.startPlay();
     } else {
       // TODO: 아직 방송하지 않은 스트림 경로로 play요청이 들어온 경우
+      console.log(`[onPlay] ${this.id} gonna be idlePlayer`);
       this.status[3] = 1;
       CURRENT_PROGRESS.idlePlayers.add(this.id);
     }
@@ -1312,7 +1320,7 @@ class RTMP_SESSION {
     switch (description) {
       case 'Connection already playing':
         this.sendPlayCmd.info.level = 'error';
-        this.sendPlayCmd.info.code = 'Netstream.Play.BadConnection';
+        this.sendPlayCmd.info.code = 'NetStream.Play.BadConnection';
         this.sendPlayCmd.info.description = description;
         this.sendCmdMsg(this.playStreamId, 'sendPlay');
         break;
@@ -1323,12 +1331,12 @@ class RTMP_SESSION {
         this.streamBegin(this.playStreamId);
 
         // send play-reset command message
-        this.sendPlayCmd.info.code = 'Netstream.Play.Reset';
+        this.sendPlayCmd.info.code = 'NetStream.Play.Reset';
         this.sendPlayCmd.info.description = 'Playing and resetting stream';
         this.sendCmdMsg(this.playStreamId, 'sendPlay');
 
         // send play-start command message
-        this.sendPlayCmd.info.code = 'Netstream.Play.Start';
+        this.sendPlayCmd.info.code = 'NetStream.Play.Start';
         this.sendPlayCmd.info.description = 'Started playing stream';
         this.sendCmdMsg(this.playStreamId, 'sendPlay');
         // send cmdmsg last line
@@ -1412,6 +1420,7 @@ class RTMP_SESSION {
 
         for (const playerId of this.players) {
           const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
+          console.log(`[deleteStream] send unpublishNotify to ${playerId}`);
           playerSession.sendPlay('Streamer unpublished stream'); // "NetStream.Play.UnpublishNotify" 상태메시지
 
           // CURRENT_PROGRESS.idlePlayers.add(playerId);
@@ -1419,8 +1428,6 @@ class RTMP_SESSION {
           // playerSession.status[3] = 1; // true idling
 
           playerSession.streamEOF(playerSession.playStreamId);
-          playerSession.stop();
-
           // session.flush();
         }
 
@@ -1495,9 +1502,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      if (playerSession.piledAVDataNum === 0) {
-        playerSession.socket.cork();
-      }
+      // if (playerSession.piledAVDataNum === 0) {
+      //   playerSession.socket.cork();
+      // }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[5]) {
@@ -1505,12 +1512,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      ++playerSession.piledAVDataNum;
+      // ++playerSession.piledAVDataNum;
 
-      if (playerSession.piledAVDataNum === 10) {
-        process.nextTick(() => playerSession.socket.uncork());
-        playerSession.piledAVDataNum = 0;
-      }
+      // if (playerSession.piledAVDataNum === 10) {
+      //   process.nextTick(() => playerSession.socket.uncork());
+      //   playerSession.piledAVDataNum = 0;
+      // }
     }
 
     // (!)player session buffer cork()
@@ -1557,9 +1564,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      if (playerSession.piledAVDataNum === 0) {
-        playerSession.socket.cork();
-      }
+      // if (playerSession.piledAVDataNum === 0) {
+      //   playerSession.socket.cork();
+      // }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[6]) {
@@ -1567,12 +1574,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      ++playerSession.piledAVDataNum;
+      // ++playerSession.piledAVDataNum;
 
-      if (playerSession.piledAVDataNum === 10) {
-        process.nextTick(() => playerSession.socket.uncork());
-        playerSession.piledAVDataNum = 0;
-      }
+      // if (playerSession.piledAVDataNum === 10) {
+      //   process.nextTick(() => playerSession.socket.uncork());
+      //   playerSession.piledAVDataNum = 0;
+      // }
     }
 
     // (!)session? address?
@@ -1582,8 +1589,6 @@ class RTMP_SESSION {
     const offset = mtid === DATA_MESSAGE_AMF3 ? 1 : 0;
     payload = payload.slice(offset, this.parsedPacket.header.chunkMessageHeader.plen);
     const dataMessage = AMF.decodeAmf0Data(payload);
-    console.log('dataMessage');
-    console.log(dataMessage);
     switch (dataMessage.cmd) {
       case '@setDataFrame': {
         if (dataMessage.dataObj) {
@@ -1599,7 +1604,7 @@ class RTMP_SESSION {
           dataObj: dataMessage.dataObj,
         };
         this.metaData = AMF.encodeAmf0Data(opt);
-        console.log(this.metaData);
+        // console.log(this.metaData);
 
         const newPacket = packet.create();
         newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
@@ -1608,8 +1613,8 @@ class RTMP_SESSION {
         newPacket.payload = this.metaData;
         newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
         newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
-        console.log('[data handler] new packet');
-        console.log(newPacket);
+        // console.log('[data handler] new packet');
+        // console.log(newPacket);
         const chunks = this.createChunks(newPacket);
 
         for (const playerId of this.players) {
@@ -1618,7 +1623,7 @@ class RTMP_SESSION {
           // 시청자가 isStarting, isPlaying, !isPausing 만족 시
           if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4]) {
             console.log(`[setDataFrame] sending metadata to viewer ${playerId}`);
-            console.log(chunks);
+            // console.log(chunks);
             chunks.writeUInt32LE(playerSession.playStreamId, 8); // 시청자마다 플레이중인 스트림 아이디가 다름.
             playerSession.socket.write(chunks);
           }
