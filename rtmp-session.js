@@ -1365,10 +1365,14 @@ class RTMP_SESSION {
   }
 
   receiveAudio(bool) {
+    console.log(`[RECEIVE AUDIO] ${this.id} audio set changed`);
+    console.log(`[RECEIVE AUDIO] bool = ${bool}`);
     this.status[5] = bool;
   }
 
   receiveVideo(bool) {
+    console.log(`[RECEIVE VIDEO] ${this.id} video set changed`);
+    console.log(`[RECEIVE VIDEO] bool = ${bool}`);
     this.status[6] = bool;
   }
 

@@ -48,29 +48,26 @@ class TRANS_SESSION extends EventEmitter {
     console.log(`outPath3 = ${this.outPath3}`);
   }
 
-  convert(outPath, bitrate) {
+  convert() {
     try {
-      mkdirp.sync(outPath);
-      fs.accessSync(outPath, constants.F_OK);
+      mkdirp.sync(this.outPath);
+      fs.accessSync(this.outPath, constants.F_OK);
+
+      mkdirp.sync(this.outPath2);
+      fs.accessSync(this.outPath2, constants.F_OK);
+
+      mkdirp.sync(this.outPath3);
+      fs.accessSync(this.outPath3, constants.F_OK);
     } catch (error) {
       console.log('[TRANS SESSION] Folder access permission denied');
-    }
-
-    let resolution = '';
-    if (bitrate === HIGH_BITRATE) {
-      resolution = HIGH_RESOLUTION;
-    } else if (bitrate === MIDDLE_BITRATE) {
-      resolution = MIDDLE_RESOLUTION;
-    } else {
-      resolution = LOW_RESOLUTION;
     }
 
     const command = ffmpegCommand(this.inPath)
       .inputFormat('flv')
       .audioCodec('aac') // set audio codec
       .videoCodec('libx264') // set video codec // h264는 지원 안 하는 듯,, libx264로 해야 돌아감
-      .videoBitrate(bitrate / 1000) // set video bitrate
-      .size(resolution) // set output frame size
+      .videoBitrate(HIGH_BITRATE / 1000) // set video bitrate
+      .size(HIGH_RESOLUTION) // set output frame size
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
@@ -85,7 +82,44 @@ class TRANS_SESSION extends EventEmitter {
         '-f hls', // HLS format
         '-max_muxing_queue_size 9999',
       ])
-      .output(`${outPath}/${this.hlsName}`) // add an output to the command
+      .output(`${this.outPath}/${this.hlsName}`) // add an output to the command
+
+      .videoBitrate(MIDDLE_BITRATE / 1000) // set video bitrate
+      .size(MIDDLE_RESOLUTION) // set output frame size
+      // .withFPSInput(30)
+      // .aspect('4:3') // set output frame aspect ratio
+      .outputOptions([
+        '-profile:v high', // baseline profile (level 3.0) for H264 video codec
+        '-level 4.1',
+        '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
+        //'-s 640x360', // 640px width, 360px height output video dimensions
+        '-start_number 0', // start the first .ts segment at index 0
+        '-hls_time 2', // 2 second segment duration
+        '-hls_list_size 5', // maximum number of playlist entries (0 means all entries/infinite)
+        '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
+        '-f hls', // HLS format
+        '-max_muxing_queue_size 9999',
+      ])
+      .output(`${this.outPath2}/${this.hlsName}`) // add an output to the command
+
+      .videoBitrate(LOW_BITRATE / 1000) // set video bitrate
+      .size(LOW_RESOLUTION) // set output frame size
+      // .withFPSInput(30)
+      // .aspect('4:3') // set output frame aspect ratio
+      .outputOptions([
+        '-profile:v high', // baseline profile (level 3.0) for H264 video codec
+        '-level 4.1',
+        '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
+        //'-s 640x360', // 640px width, 360px height output video dimensions
+        '-start_number 0', // start the first .ts segment at index 0
+        '-hls_time 2', // 2 second segment duration
+        '-hls_list_size 5', // maximum number of playlist entries (0 means all entries/infinite)
+        '-hls_flags delete_segments', // deleted after a period of time equal to the duration of the segment plus the duration of the playlist
+        '-f hls', // HLS format
+        '-max_muxing_queue_size 9999',
+      ])
+      .output(`${this.outPath3}/${this.hlsName}`) // add an output to the command
+
       .on('start', (commandLine) => { // ffmpeg process started
         console.log(`Spawned ffmpeg with command: ${commandLine}`);
       })
@@ -142,9 +176,7 @@ class TRANS_SESSION extends EventEmitter {
           fs.close(fd, () => {
             console.log('master m3u8 file created');
           });
-          this.convert(this.outPath, HIGH_BITRATE); // high bitrate 2.5Mb/s
-          this.convert(this.outPath2, MIDDLE_BITRATE); // middle bitrate 1.5Mb/s
-          this.convert(this.outPath3, LOW_BITRATE); // low bitrate 800kb/s
+          this.convert();
         }
       });
     });
