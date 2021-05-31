@@ -21,6 +21,7 @@ class TRANS_SERVER {
     }
 
     CURRENT_PROGRESS.events.on('postPublish', this.onPostPublish.bind(this));
+    CURRENT_PROGRESS.events.on('donePublish', this.onDonePublish.bind(this));
     console.log('[TRANS SERVER] trans server is getting started');
   }
 
@@ -41,6 +42,14 @@ class TRANS_SERVER {
       this.transSessions.delete(id);
     });
     session.run();
+  }
+
+  onDonePublish(id, streamPath, args) {
+    const transSession = this.transSessions.get(id);
+    if (transSession) {
+      console.log('[TRANS SERVER] on done publish called');
+      transSession.end();
+    }
   }
 }
 

@@ -8,7 +8,7 @@ const AV = require('./rtmp-av');
 const { AUDIO_SOUND_RATE, AUDIO_CODEC_NAME, VIDEO_CODEC_NAME } = require('./rtmp-av');
 
 /* 기타 */
-const TIMEOUT = 10000;
+const TIMEOUT = 30000;
 
 /* handshake */
 const HANDSHAKE_UNINIT = 0;
@@ -285,6 +285,14 @@ class RTMP_SESSION {
     this.avcSequenceHeader = null;
 
     this.piledAVDataNum = 0;
+
+    CURRENT_PROGRESS.events.on('transError', this.transError.bind(this));
+  }
+
+  transError(id) {
+    if (this.id !== id) return;
+
+    this.stop();
   }
 
   run() {
@@ -316,7 +324,7 @@ class RTMP_SESSION {
 
     console.log(`[Socket Close] id=${this.id}`);
     CURRENT_PROGRESS.sessions.delete(this.id);
-    // this.socket.uncork();
+    this.socket.uncork();
     this.socket.destroy();
   }
 
@@ -1162,7 +1170,7 @@ class RTMP_SESSION {
     if (typeof this.onPublishCmd.streamName !== 'string') return;
 
     // 서버의 서브디렉토리(서버 실행파일을 포함하고 있는)에 저장된다.
-    this.publishStreamPath = `/${this.appname}`;
+    this.publishStreamPath = `/${this.appname}/${this.onPublishCmd.streamName.split('?')[0]}`;
     this.publishStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     this.publishArgs = QueryString.parse(this.onPublishCmd.streamName.split('?')[1]);
     if (this.status[0] === 0) return;
@@ -1227,7 +1235,7 @@ class RTMP_SESSION {
       return;
     }
 
-    this.playStreamPath = `/${this.appname}`;
+    this.playStreamPath = `/${this.appname}/${this.onPlayCmd.streamName.split('?')[0]}`;
     this.playStreamId = this.parsedPacket.header.chunkMessageHeader.msid;
     this.playArgs = QueryString.parse(this.onPlayCmd.streamName.split('?')[1]);
 
@@ -1400,7 +1408,8 @@ class RTMP_SESSION {
       } else { // 스트림 생성자인 경우
         const publisherId = CURRENT_PROGRESS.publishers.get(this.playStreamPath);
         if (publisherId) {
-          CURRENT_PROGRESS.sessions.get(publisherId).players.delete(this.id);
+          const publisherSession = CURRENT_PROGRESS.sessions.get(publisherId);
+          publisherSession.players.delete(this.id);
         }
         this.status[2] = 0; // playing stop, set false
       }
@@ -1415,17 +1424,18 @@ class RTMP_SESSION {
     if (msg.streamId === this.publishStreamId) {
       if (this.status[1]) {
         if (this.status[0]) {
+          CURRENT_PROGRESS.events.emit('donePublish', this.id, this.publishStreamPath, this.publishArgs);
           this.sendPublish(`${this.publishStreamId} now unpublished`); // "NetStream.Unpublish.Success" 상태메시지 보내기
         }
 
         for (const playerId of this.players) {
           const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
-          console.log(`[deleteStream] send unpublishNotify to ${playerId}`);
+          console.log(`[deleteStream] send UnpublishNotify to ${playerId}`);
           playerSession.sendPlay('Streamer unpublished stream'); // "NetStream.Play.UnpublishNotify" 상태메시지
 
-          // CURRENT_PROGRESS.idlePlayers.add(playerId);
-          // playerSession.status[2] = 0; // not playing
-          // playerSession.status[3] = 1; // true idling
+          CURRENT_PROGRESS.idlePlayers.add(playerId);
+          playerSession.status[2] = 0; // not playing
+          playerSession.status[3] = 1; // true idling
 
           playerSession.streamEOF(playerSession.playStreamId);
           // session.flush();
@@ -1502,9 +1512,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      // if (playerSession.piledAVDataNum === 0) {
-      //   playerSession.socket.cork();
-      // }
+      if (playerSession.piledAVDataNum === 0) {
+        playerSession.socket.cork();
+      }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[5]) {
@@ -1512,12 +1522,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      // ++playerSession.piledAVDataNum;
+      ++playerSession.piledAVDataNum;
 
-      // if (playerSession.piledAVDataNum === 10) {
-      //   process.nextTick(() => playerSession.socket.uncork());
-      //   playerSession.piledAVDataNum = 0;
-      // }
+      if (playerSession.piledAVDataNum === 10) {
+        process.nextTick(() => playerSession.socket.uncork());
+        playerSession.piledAVDataNum = 0;
+      }
     }
 
     // (!)player session buffer cork()
@@ -1564,9 +1574,9 @@ class RTMP_SESSION {
     for (const playerId of this.players) {
       const playerSession = CURRENT_PROGRESS.sessions.get(playerId);
 
-      // if (playerSession.piledAVDataNum === 0) {
-      //   playerSession.socket.cork();
-      // }
+      if (playerSession.piledAVDataNum === 0) {
+        playerSession.socket.cork();
+      }
 
       // 시청자가 isStarting, isPlaying, !isPausing 만족 시
       if (playerSession.status[0] && playerSession.status[2] && !playerSession.status[4] && playerSession.status[6]) {
@@ -1574,12 +1584,12 @@ class RTMP_SESSION {
         playerSession.socket.write(chunks);
       }
 
-      // ++playerSession.piledAVDataNum;
+      ++playerSession.piledAVDataNum;
 
-      // if (playerSession.piledAVDataNum === 10) {
-      //   process.nextTick(() => playerSession.socket.uncork());
-      //   playerSession.piledAVDataNum = 0;
-      // }
+      if (playerSession.piledAVDataNum === 10) {
+        process.nextTick(() => playerSession.socket.uncork());
+        playerSession.piledAVDataNum = 0;
+      }
     }
 
     // (!)session? address?

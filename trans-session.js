@@ -1,9 +1,15 @@
 const EventEmitter = require('events');
-const ffmpegCommand = require('fluent-ffmpeg');
+const FfmpegCommand = require('fluent-ffmpeg');
 const mkdirp = require('mkdirp');
 const fs = require('fs');
+const util = require('util');
 const path = require('path');
 const constants = require('fs').constants;
+const CURRENT_PROGRESS = require('./rtmp-center-ad');
+
+const readdir = util.promisify(fs.readdir);
+const unlink = util.promisify(fs.unlink);
+const rmdir = util.promisify(fs.rmdir);
 
 /*
   테스트 결과
@@ -27,12 +33,14 @@ class TRANS_SESSION extends EventEmitter {
   constructor(conf) {
     super();
 
+    this.ffmpegProcess = null;
+
     this.id = conf.id;
 
     this.port = conf.port;
     this.streamPath = conf.streamPath;
-    this.mediaRoot = path.join(__dirname, 'live');
-    this.mediaFolder = path.join(this.mediaRoot, this.streamPath);
+    // this.mediaRoot = path.join(__dirname, 'live');
+    this.mediaFolder = path.join(__dirname, this.streamPath);
     this.hlsName = 'index.m3u8';
     this.inPath = `rtmp://127.0.0.1:${this.port}${this.streamPath}`;
     this.output = 'high';
@@ -65,7 +73,7 @@ class TRANS_SESSION extends EventEmitter {
       console.log('[TRANS SESSION] Folder access permission denied');
     }
 
-    const command = ffmpegCommand(this.inPath)
+    this.ffmpegProcess = new FfmpegCommand(this.inPath)
       .output(`${this.outPath}/${this.hlsName}`) // add an output to the command
       .inputFormat('flv')
       .audioCodec('aac') // set audio codec
@@ -136,17 +144,19 @@ class TRANS_SESSION extends EventEmitter {
         console.log(`Input is ${data.audio} audio with ${data.video} video`);
       })
       .on('progress', (progress) => { // transcoding progress information
-        // console.log(`Processing: ${progress.percent}% done`);
+        console.log(`Processing: ${progress.percent}% done`);
       })
       .on('stderr', (stderrLine) => { // ffmpeg output
-        // console.log(`Stderr output: ${stderrLine}`);
+        console.log(`Stderr output: ${stderrLine}`);
       })
       .on('error', (err, stdout, stderr) => { // transcoding error
         console.log(`Cannot process video: ${err.message}`);
-        this.emit('end');
+        this.transEnd(this.id);
+        CURRENT_PROGRESS.events.emit('transError', this.id);
       })
-      .on('end', this.onFFmpegEnd.bind(this))
-      .run();
+      .on('end', this.onFFmpegEnd.bind(this));
+
+    this.ffmpegProcess.run();
   }
 
   onFFmpegEnd(stdout, stderr) {
@@ -193,20 +203,18 @@ class TRANS_SESSION extends EventEmitter {
     });
   }
 
-  transEnd(id) {
+  async transEnd(id) {
     console.log(`[TRANS END] 종료하라고 명령받은 id = ${id}`);
     console.log(`[TRANS END] 현재 trans session의 id = ${this.id}`);
-    if (this.id !== id) {
-      return;
-    }
+    if (this.id !== id) return;
 
     this.emit('end');
     try {
-      const files = fs.readdirSync(this.outPath);
-      files.forEach((filename) => {
+      const files = await readdir(this.outPath);
+      files.forEach(async (filename) => {
         if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
           const targetPath = path.join(this.outPath, filename);
-          fs.unlinkSync(targetPath);
+          await unlink(targetPath);
         }
       });
     } catch (error) {
@@ -214,11 +222,11 @@ class TRANS_SESSION extends EventEmitter {
     }
 
     try {
-      const files = fs.readdirSync(this.outPath2);
-      files.forEach((filename) => {
+      const files = await readdir(this.outPath2);
+      files.forEach(async (filename) => {
         if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
           const targetPath = path.join(this.outPath2, filename);
-          fs.unlinkSync(targetPath);
+          await unlink(targetPath);
         }
       });
     } catch (error) {
@@ -226,11 +234,11 @@ class TRANS_SESSION extends EventEmitter {
     }
 
     try {
-      const files = fs.readdirSync(this.outPath3);
-      files.forEach((filename) => {
+      const files = await readdir(this.outPath3);
+      files.forEach(async (filename) => {
         if (filename.endsWith('.ts') || filename.endsWith('.m3u8')) {
           const targetPath = path.join(this.outPath3, filename);
-          fs.unlinkSync(targetPath);
+          await unlink(targetPath);
         }
       });
     } catch (error) {
@@ -238,25 +246,29 @@ class TRANS_SESSION extends EventEmitter {
     }
 
     try {
-      const files = fs.readdirSync(this.mediaFolder);
-      files.forEach((filename) => {
+      const files = await readdir(this.mediaFolder);
+      files.forEach(async (filename) => {
         console.log(`${this.mediaFolder} 하위 파일이름 : ${filename}`);
         const deleteTarget = path.join(this.mediaFolder, filename);
         if (filename.endsWith('.m3u8')) {
-          fs.unlinkSync(deleteTarget);
+          await unlink(deleteTarget);
         } else {
-          fs.rmdirSync(deleteTarget);
+          await rmdir(deleteTarget);
         }
       });
     } catch (error) {
       console.log('[TRANS SESSION] mediaFolder .m3u8 or directory delete error');
     }
 
-    try {
-      fs.rmdirSync(this.mediaFolder);
-    } catch (error) {
-      console.log('[TRANS SESSION] mediaFolder delete error');
-    }
+    // try {
+    //   await rmdir(this.mediaFolder);
+    // } catch (error) {
+    //   console.log('[TRANS SESSION] mediaFolder delete error');
+    // }
+  }
+
+  end() {
+    this.ffmpegProcess.kill();
   }
 }
 

@@ -49,6 +49,7 @@
         "operator-linebreak": "off",
         "one-var": "off",
         "one-var-declaration-per-line": "off",
-        "no-multi-str": "off"
+        "no-multi-str": "off",
+        "indent": "off"
     }
 }
