@@ -1,27 +1,20 @@
 const express = require('express');
-const fs = require('fs');
-const util = require('util');
+const CURRENT_PROGRESS = require('../rtmp-center-ad');
 
 const router = express.Router();
-const readdir = util.promisify(fs.readdir);
 
 /* GET home page. */
 router.get('/', async (req, res, next) => {
-  const urls = [];
-  let ids;
-  try {
-    const dirList = await readdir('live');
-    for (const dirname of dirList) {
-      urls.push(`live/${dirname}`);
-    }
-    ids = dirList;
-  } catch (error) {
-    console.log('index router error');
-    console.log(error);
-  } finally {
-    console.log(urls);
-    res.render('index', { urls, ids });
+  const urls = Array.from(CURRENT_PROGRESS.publishers.keys());
+  const ids = [];
+  console.log(urls);
+  for (const url of urls) {
+    console.log(url);
+    const parsedUrl = url.split('/');
+    ids.push(parsedUrl[parsedUrl.length - 1]);
   }
+  console.log(ids);
+  res.render('index', { urls, ids });
 });
 
 router.get('/live/:id', (req, res, next) => {
