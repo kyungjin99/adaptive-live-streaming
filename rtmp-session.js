@@ -256,7 +256,7 @@ class RTMP_SESSION {
     // this.status = Buffer.from('0000011', 'binary'); // range 0 ~ 6
     this.status = Buffer.from('00000000000101', 'hex'); // range 0 ~ 6
     // 0(is Start?, false) 0(is Publishing?, false) 0(is Playing?, false) 0(is Idling?, false) 0(is Pausing?, false)
-    // 1(is Receiving Audio?, true) 1(is Receiving Video?, true)
+    // 1(is Receiving Audio?, true) 1(is Receiving Video?, true
 
     // TODO: flv에 쓰이는 변수들..? 확인 필요
     this.players = new Set();
