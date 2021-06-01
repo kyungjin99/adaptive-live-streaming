@@ -1,6 +1,5 @@
 const net = require('net');
 const RtmpSession = require('./rtmp-session');
-const CURRENT_PROGRESS = require('./rtmp-center-ad');
 
 const PORT = 1935;
 
@@ -12,7 +11,7 @@ class RTMP_SERVER {
   run() {
     const server = net.createServer((socket) => {
       socket.on('end', () => {
-        console.log('client exit');
+        console.log('[SOCKET] client exit');
       });
 
       const sess = new RtmpSession(socket);
@@ -26,7 +25,7 @@ class RTMP_SERVER {
     });
 
     server.listen(PORT, () => {
-      console.log(`RTMP Server is listening on port ${PORT}`);
+      console.log(`[RTMP SERVER]O RTMP Server is listening on port ${PORT}`);
     });
   }
 }
