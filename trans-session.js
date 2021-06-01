@@ -39,7 +39,6 @@ class TRANS_SESSION extends EventEmitter {
 
     this.port = conf.port;
     this.streamPath = conf.streamPath;
-    // this.mediaRoot = path.join(__dirname, 'live');
     this.mediaFolder = path.join(__dirname, this.streamPath);
     this.hlsName = 'index.m3u8';
     this.inPath = `rtmp://127.0.0.1:${this.port}${this.streamPath}`;
@@ -52,11 +51,10 @@ class TRANS_SESSION extends EventEmitter {
     this.outPath3 = path.join(this.mediaFolder, this.output3);
     this.on('transEnd', this.transEnd.bind(this));
 
-    console.log(`mediaRoot = ${this.mediaRoot}`);
-    console.log(`mediaFolder = ${this.mediaFolder}`);
-    console.log(`outPath = ${this.outPath}`);
-    console.log(`outPath2 = ${this.outPath2}`);
-    console.log(`outPath3 = ${this.outPath3}`);
+    console.log(`[TRANS SESSION] mediaFolder = ${this.mediaFolder}`);
+    console.log(`[TRANS SESSION] outPath = ${this.outPath}`);
+    console.log(`[TRANS SESSION] outPath2 = ${this.outPath2}`);
+    console.log(`[TRANS SESSION] outPath3 = ${this.outPath3}`);
   }
 
   convert() {
@@ -81,6 +79,7 @@ class TRANS_SESSION extends EventEmitter {
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
+        '-threads 4',
         '-profile:v high', // baseline profile (level 3.0) for H264 video codec
         '-level 4.1',
         '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
@@ -102,6 +101,7 @@ class TRANS_SESSION extends EventEmitter {
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
+        '-threads 4',
         '-profile:v high', // baseline profile (level 3.0) for H264 video codec
         '-level 4.1',
         '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
@@ -123,6 +123,7 @@ class TRANS_SESSION extends EventEmitter {
       // .withFPSInput(30)
       // .aspect('4:3') // set output frame aspect ratio
       .outputOptions([
+        '-threads 4',
         '-profile:v high', // baseline profile (level 3.0) for H264 video codec
         '-level 4.1',
         '-g 60', // specify GOP size. 우리꺼는 초당 10 frame인 듯,, (초당 frame 수) * (hls_time 값으로 준 수)
@@ -141,16 +142,16 @@ class TRANS_SESSION extends EventEmitter {
         // console.log(`Spawned ffmpeg with command: ${commandLine}`);
       })
       .on('codecData', (data) => { // input codec data available
-        console.log(`Input is ${data.audio} audio with ${data.video} video`);
+        console.log(`[FFMPEG] Input is ${data.audio} audio with ${data.video} video`);
       })
       .on('progress', (progress) => { // transcoding progress information
-        console.log(`Processing: ${progress.percent}% done`);
+        // console.log(`[FFMPEG] Processing: ${progress.percent}% done`);
       })
       .on('stderr', (stderrLine) => { // ffmpeg output
-        console.log(`Stderr output: ${stderrLine}`);
+        console.log(`[FFMPEG] Stderr output: ${stderrLine}`);
       })
       .on('error', (err, stdout, stderr) => { // transcoding error
-        console.log(`Cannot process video: ${err.message}`);
+        console.log(`[FFMPEG] Cannot process video: ${err.message}`);
         this.transEnd(this.id);
         CURRENT_PROGRESS.events.emit('transError', this.id);
       })
@@ -160,14 +161,14 @@ class TRANS_SESSION extends EventEmitter {
   }
 
   onFFmpegEnd(stdout, stderr) {
-    console.log('Transcoding succeeded!!!!!');
+    console.log('[TRANS SESSION] Transcoding Finished!!!!!');
     this.emit('transEnd', this.id);
   }
 
   run() {
-    console.log('[TRANS SESSION] run method start');
-    console.log(`this.streamPath: ${this.streamPath}`);
-    const inPath = `rtmp://127.0.0.1:${this.port}${this.streamPath}`;
+    console.log('[TRANS SESSION] Run method start');
+    console.log(`[TRANS SESSION] Stream path: ${this.streamPath}`);
+    // const inPath = `rtmp://127.0.0.1:${this.port}${this.streamPath}`;
 
     // create master .m3u8 file
     const data = `#EXTM3U
@@ -187,15 +188,14 @@ class TRANS_SESSION extends EventEmitter {
     }
 
     const masterPath = path.join(this.mediaFolder, 'master.m3u8');
-    console.log(`masterPath = ${masterPath}`);
     fs.open(masterPath, 'w+', (err, fd) => {
-      if (err) console.log('error while creating/opening master m3u8 file');
+      if (err) console.log('[TRANS SESSION] error while creating/opening master m3u8 file');
       fs.write(fd, data, (err2) => {
         if (err2) {
-          console.log('error while writing to master m3u8 file');
+          console.log('[TRANS SESSION] Error while writing to master m3u8 file');
         } else {
           fs.close(fd, () => {
-            console.log('master m3u8 file created');
+            console.log('[TRANS SESSION] master.m3u8 created');
           });
           this.convert();
         }
@@ -204,8 +204,8 @@ class TRANS_SESSION extends EventEmitter {
   }
 
   async transEnd(id) {
-    console.log(`[TRANS END] 종료하라고 명령받은 id = ${id}`);
-    console.log(`[TRANS END] 현재 trans session의 id = ${this.id}`);
+    console.log(`[TRANS SESSION] 종료하라고 명령받은 id = ${id}`);
+    console.log(`[TRANS SESSION] 현재 trans session의 id = ${this.id}`);
     if (this.id !== id) return;
 
     this.emit('end');

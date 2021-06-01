@@ -1,5 +1,4 @@
 const fs = require('fs');
-const mkdirp = require('mkdirp');
 const TransSession = require('./trans-session');
 const CURRENT_PROGRESS = require('./rtmp-center-ad');
 
@@ -38,7 +37,7 @@ class TRANS_SERVER {
     const session = new TransSession(conf);
     this.transSessions.set(id, session);
     session.on('end', () => {
-      console.log('[TRANS SERVER] trans session deleted');
+      console.log(`[TRANS SERVER] Trans session for ${id} has been deleted`);
       this.transSessions.delete(id);
     });
     session.run();
@@ -47,7 +46,7 @@ class TRANS_SERVER {
   onDonePublish(id, streamPath, args) {
     const transSession = this.transSessions.get(id);
     if (transSession) {
-      console.log('[TRANS SERVER] on done publish called');
+      console.log('[TRANS SERVER] onDonePublish called');
       transSession.end();
     }
   }
