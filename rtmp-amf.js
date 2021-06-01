@@ -1,7 +1,6 @@
-/**
- * Created by delian on 3/12/14.
- * This module provides encoding and decoding of the AMF0 and AMF3 format
- */
+// Created by delian on 3/12/14.
+// This module provides encoding and decoding of the AMF0 and AMF3 format
+
 const Logger = require('./node_core_logger');
 
 const amf3dRules = {

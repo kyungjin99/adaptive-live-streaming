@@ -209,7 +209,7 @@ class RTMP_SESSION {
     this.lastAck = 0;
 
     // NetStream 위한 변수
-    this.appname = ''; // TODO: 필요없을거같은데..? 확인 필요
+    this.appname = '';
 
     // for parsing chunk
     this.parsingState = 0;
@@ -236,7 +236,7 @@ class RTMP_SESSION {
     this.sendPlayCmd = this.command.sendPlayCmd();
     this.sendSampleAccessCmd = this.command.sendSampleAccessCmd();
 
-    // 
+    //
     this.packetList = new Map();
     this.limitType = LIMIT_TYPE_HARD;
     this.startTimestamp = null;
@@ -1427,20 +1427,18 @@ class RTMP_SESSION {
 
   /* about audio, video */
   audioHandler(payload) {
-    // payload = payload.slice(0, payload.length); // (!)header.length
-    // payload = payload.slice(0, this.parsedPacket.header.chunkMessageHeader.plen);
     const soundFormat = (payload[0] >> 4) & 0x0f;
     const soundRate = (payload[0] >> 2) & 0x03;
     const soundSize = (payload[0] >> 1) & 0x01;
     let soundType = (payload[0]) & 0x01;
 
-    // (!)check if first audio received
+    // if this is first audio arrival
     if (this.audioCodec === 0) {
       this.audioCodec = soundFormat;
       this.audioCodecName = AUDIO_CODEC_NAME[soundFormat];
       this.audioSampleRate = AUDIO_SOUND_RATE[soundRate];
-      soundType += 1;
-      this.audioChannels = soundType; // necessary?
+      soundType += 1; //Streo
+      this.audioChannels = soundType;
 
       if (soundFormat === 4) { // Nellymoser 16k-Hz mono
         this.audioSampleRate = 16000;
@@ -1455,8 +1453,6 @@ class RTMP_SESSION {
       console.log(`[RTMP SESSION] id = ${this.id} audioCodec = ${this.audioCodec}, audioCodecName = ${this.audioCodecName}, audioSampleRate = ${this.audioSampleRate}, audioChannels = ${this.audioChannels}`);
     }
 
-    // if not AAC, print info
-
     // AACPacketType
     // 0 : AACSequenceHeader, 1 : AAC raw
     // if AACPacketType == 0, AudioSpecificConfig
@@ -1468,16 +1464,16 @@ class RTMP_SESSION {
       this.audioProfileName = AV.getAACProfileName(aacInfo);
       this.audioSampleRate = aacInfo.sample_rate;
       this.audioChannels = aacInfo.channels;
-      // if AAC, print info
+
     }
 
-    // // repackaging
+    // repackaging
     const newPacket = packet.create();
     newPacket.header.basicHeader.fmt = CHUNK_TYPE_0;
     newPacket.header.basicHeader.csid = RTMP_CHANNEL_AUDIO;
     newPacket.header.chunkMessageHeader.mtid = AUDIO_MESSAGE;
     newPacket.payload = payload; // payload of received parsePacket
-    // packet.payload.length = packet.payload.length; // (!)header.length // TODO: no-self-assign eslint 오류. 수정 요망
+    packet.payload.length = payload.length;
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
     newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
     const chunks = this.createChunks(newPacket);
@@ -1502,18 +1498,14 @@ class RTMP_SESSION {
         playerSession.piledAVDataNum = 0;
       }
     }
-
-    // (!)player session buffer cork()
   }
 
   videoHandler(payload) {
-    // payload = payload.slice(0, payload.length); // (!)header.length
-    // payload = payload.slice(0, this.parsedPacket.header.chunkMessageHeader.plen);
     const frameType = (payload[0] >> 4) & 0x0f;
     const codecId = payload[0] & 0x0f;
 
     // AVC(H.264)
-    // (!) codecID === 12, HEVC(H.265)
+    // if codecID === 12, HEVC(H.265)
     if (codecId === 7 || codecId === 12) {
       if (frameType === 1 && payload[1] === 0) {
         this.avcSequenceHeader = Buffer.alloc(payload.length);
@@ -1528,7 +1520,7 @@ class RTMP_SESSION {
       }
     }
 
-    // if this is first arrival
+    // if this is first  video arrival
     if (this.videoCodec === 0) {
       this.videoCodec = codecId;
       this.videoCodecName = VIDEO_CODEC_NAME[codecId];
