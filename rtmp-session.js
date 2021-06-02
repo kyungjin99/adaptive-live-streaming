@@ -1464,7 +1464,6 @@ class RTMP_SESSION {
       this.audioProfileName = AV.getAACProfileName(aacInfo);
       this.audioSampleRate = aacInfo.sample_rate;
       this.audioChannels = aacInfo.channels;
-
     }
 
     // repackaging
@@ -1473,7 +1472,6 @@ class RTMP_SESSION {
     newPacket.header.basicHeader.csid = RTMP_CHANNEL_AUDIO;
     newPacket.header.chunkMessageHeader.mtid = AUDIO_MESSAGE;
     newPacket.payload = payload; // payload of received parsePacket
-    packet.payload.length = payload.length;
     newPacket.header.chunkMessageHeader.plen = newPacket.payload.length;
     newPacket.header.chunkMessageHeader.timestamp = this.parsedPacket.timestamp;
     const chunks = this.createChunks(newPacket);
